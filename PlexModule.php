@@ -61,7 +61,7 @@ class PlexModule extends BaseModule {
     }
 
     public function getVersion(): string {
-        return '1.0.1';
+        return '1.0.2';
     }
 
     /**
@@ -148,9 +148,12 @@ class PlexModule extends BaseModule {
     }
 
     public function registerNavbar(NavbarRegistry $registry): void {
-        $registry->add((new NavbarItem('topbar.settings.plex_settings'))
-            ->parent('topbar.settings')->url('settings_plex')
-            ->label('plex_settings')->permissions(['folder_watch_settings'])->order(55));
+        // Profile dropdown: core registers items under the 'profile' parent
+        // (CoreNavbarProvider::_profile), reserving order 100–980 for modules.
+        // The 'watch' dependency owns the folder-settings divider at order 100.
+        $registry->add((new NavbarItem('profile.plex_settings'))
+            ->parent('profile')->url('settings_plex')
+            ->label('plex_settings')->permissions(['folder_watch_settings'])->order(120));
         $registry->add((new NavbarItem('management.service_setup.plex'))
             ->parent('management.service_setup')->url('plex')
             ->label('', 'Plex Sync')->permissions(['folder_watch'])->order(70));
