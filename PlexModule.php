@@ -8,6 +8,7 @@ use XcVm\Core\Http\Router;
 use XcVm\Core\Module\BaseModule;
 use XcVm\Core\Module\NavbarItem;
 use XcVm\Core\Module\NavbarRegistry;
+use XcVm\Core\Module\TopbarRegistry;
 use XcVm\Infrastructure\Database\DatabaseFactory;
 
 /**
@@ -157,5 +158,38 @@ class PlexModule extends BaseModule {
         $registry->add((new NavbarItem('management.service_setup.plex'))
             ->parent('management.service_setup')->url('plex')
             ->label('', 'Plex Sync')->permissions(['folder_watch'])->order(70));
+    }
+
+    /**
+     * Per-page topbar buttons owned by this module.
+     *
+     * Defines its own pages (plex, plex_add, settings_plex) and — because plex
+     * depends on watch — also injects a "Plex Settings" cross-link into the
+     * watch/settings/backups/cache pages. Core no longer hard-codes any of these.
+     */
+    public function registerTopbar(TopbarRegistry $registry): void {
+        // Own page: Plex libraries list.
+        $registry->add('plex', 'Add Library', 'plex_add', 'folder_watch_add', null, 10);
+        $registry->add('plex', 'Settings', 'settings_plex', 'folder_watch_settings', null, 20);
+        $registry->add('plex', 'Watch Folder Logs', 'watch_output', 'folder_watch_output', null, 30);
+        $registry->add('plex', 'Kill Running', null, 'folder_watch_settings', 'onClick="killPlexSync();"', 40);
+        $registry->add('plex', 'Enable All', null, 'folder_watch_settings', 'onClick="enableAll();"', 50);
+        $registry->add('plex', 'Disable All', null, 'folder_watch_settings', 'onClick="disableAll();"', 60);
+
+        // Own page: add/edit a library.
+        $registry->add('plex_add', 'Manage Libraries', 'plex', 'folder_watch', null, 10);
+
+        // Own page: plex settings.
+        $registry->add('settings_plex', 'Libraries', 'plex', 'folder_watch', null, 10);
+        $registry->add('settings_plex', 'General Settings', 'settings', 'settings', null, 20);
+        $registry->add('settings_plex', 'Backup Settings', 'backups', 'database', null, 30);
+        $registry->add('settings_plex', 'Watch Settings', 'settings_watch', 'folder_watch_settings', null, 40);
+        $registry->add('settings_plex', 'Watch Folder Logs', 'watch_output', 'folder_watch_output', null, 50);
+
+        // Cross-link into the watch settings page and the core settings pages.
+        $registry->add('settings_watch', 'Plex Settings', 'settings_plex', 'folder_watch_settings', null, 50);
+        $registry->add('settings', 'Plex Settings', 'settings_plex', 'folder_watch_settings', null, 210);
+        $registry->add('backups', 'Plex Settings', 'settings_plex', 'folder_watch_settings', null, 210);
+        $registry->add('cache', 'Plex Settings', 'settings_plex', 'folder_watch_settings', null, 210);
     }
 }
