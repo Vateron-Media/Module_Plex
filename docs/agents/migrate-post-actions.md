@@ -12,8 +12,8 @@ Core's `src/Public/Views/admin/post.php` still knows this module by name:
 - `case 'settings_plex'` calls `PlexService::editPlexSettings($rData)`;
 - `case 'plex_add'` calls `PlexService::processPlexSync($rData)`.
 
-Core must not depend on a module, and these actions are also the reason core's
-`PageAuthorization::checkPostAction()` leaves unmapped actions open. The module already
+Core must not depend on a module; until they move, core also has to list them in
+`PageAuthorization::MODULE_POST_ACTIONS` (post actions are refused by default). The module already
 owns its other admin endpoints through `$router->api(...)` in
 `PlexModule::registerRoutes()` (`enable_plex`, `kill_plex`, `plex_sections`, …). Move
 the two saves the same way.
@@ -60,6 +60,9 @@ the two saves the same way.
 
 1. Remove `case 'settings_plex'`, `case 'plex_add'` and the `PlexService` import from
    `src/Public/Views/admin/post.php`.
+   Drop the same actions from `PageAuthorization::MODULE_POST_ACTIONS`
+   (`src/Core/Auth/PageAuthorization.php`), which holds them to the module's
+   permissions until then.
 2. Coordinate with the Watch module's matching task (`Module_Watchfolder/docs/agents/migrate-post-actions.md`):
    once both have moved, `post.php` has no module imports left.
 3. Run `make gates`, `make phpstan`, the unit suite, and the CRAP gate (see core `CLAUDE.md`).
