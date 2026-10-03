@@ -8,7 +8,7 @@ use XcVm\Core\Cluster\NodeRpc;
 use XcVm\Core\Http\ApiClient;
 use XcVm\Core\Util\AdminHelpers;
 use XcVm\Domain\Server\ServerRepository;
-use XcVm\Domain\Stream\StreamRepository;
+use XcVm\Module\Watch\WatchService;
 
 /**
  * PlexService — plex service
@@ -56,7 +56,7 @@ class PlexService {
 
 	public static function processPlexSync($rData) {
 		if (isset($rData['edit'])) {
-			$rArray = AdminHelpers::overwriteData(StreamRepository::getWatchFolder($rData['edit']), $rData);
+			$rArray = AdminHelpers::overwriteData(WatchService::getWatchFolder($rData['edit']), $rData);
 		} else {
 			$rArray = QueryHelper::verifyPostTable('watch_folders', $rData);
 			unset($rArray['id']);
