@@ -4,7 +4,7 @@
  * Plex settings (Bootstrap 5, new-UI). Setup thread/scan tuning plus per-genre
  * Category + Bouquet mapping for Movie (type 3) and TV (type 4) libraries.
  * Body-only view: the controller renders the unified admin shell around it and
- * includes settings_scripts.php afterwards. Posts to post.php?action=settings_plex.
+ * includes settings_scripts.php afterwards. Posts to api?action=settings_plex_save.
  */
 
 use XcVm\Domain\Stream\CategoryService;
@@ -24,7 +24,7 @@ use XcVm\Domain\Stream\CategoryService;
 
 <div class="card">
     <div class="card-body">
-        <form id="plex-settings-form" method="POST" action="post.php?action=settings_plex" autocomplete="off">
+        <form id="plex-settings-form" method="POST" action="api?action=settings_plex_save" autocomplete="off">
             <ul class="nav nav-tabs" role="tablist">
                 <li class="nav-item"><button type="button" class="nav-link active" data-bs-toggle="tab" data-bs-target="#setup"><i class="icon-base ti tabler-id me-1"></i>Setup</button></li>
                 <li class="nav-item"><button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#categories"><i class="icon-base ti tabler-movie me-1"></i>Movie Categories</button></li>

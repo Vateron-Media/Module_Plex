@@ -5,7 +5,6 @@ namespace XcVm\Module\Plex;
 use XcVm\Core\Http\RequestManager;
 use XcVm\Core\Util\AdminHelpers;
 use XcVm\Domain\Bouquet\BouquetService;
-use XcVm\Domain\Server\ServerService;
 use XcVm\Domain\Stream\StreamRepository;
 use XcVm\Infrastructure\Database\DatabaseFactory;
 
@@ -93,6 +92,40 @@ class PlexController {
     //  API-действия (JSON)
     // ───────────────────────────────────────────────────────────
 
+    /** action=settings_plex_save — save the Plex Settings form (POST only). */
+    public function apiSaveSettings() {
+        self::postOnly();
+        self::reply(PlexService::editPlexSettings(RequestManager::getAll()), 'settings_plex');
+    }
+
+    /** action=plex_library_save — add or edit a library (POST only). */
+    public function apiSaveLibrary() {
+        self::postOnly();
+        self::reply(PlexService::processPlexSync(RequestManager::getAll()), 'plex');
+    }
+
+    /**
+     * State changes never run from a GET (a CSRF via <img src>): answer 405,
+     * as core's post.php does.
+     */
+    private static function postOnly() {
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            http_response_code(405);
+            echo json_encode(['result' => false, 'status' => 0, 'error' => 'Method Not Allowed']);
+            exit();
+        }
+    }
+
+    /** The JSON the forms expect: redirect to $rPage on success, else the error. */
+    private static function reply(array $rReturn, string $rPage) {
+        if ($rReturn['status'] == STATUS_SUCCESS) {
+            echo json_encode(['result' => true, 'location' => $rPage . '?status=' . intval($rReturn['status']), 'status' => $rReturn['status']]);
+        } else {
+            echo json_encode(['result' => false, 'data' => $rReturn['data'] ?? null, 'status' => $rReturn['status']]);
+        }
+        exit();
+    }
+
     public function apiEnable() {
         PlexRepository::enableAll();
         echo json_encode(['result' => true]);
@@ -106,7 +139,7 @@ class PlexController {
     }
 
     public function apiKill() {
-        ServerService::killPlexSync();
+        PlexService::killSync();
         echo json_encode(['result' => true]);
         exit();
     }

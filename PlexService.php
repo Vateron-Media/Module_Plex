@@ -4,8 +4,10 @@ namespace XcVm\Module\Plex;
 
 use XcVm\Core\Config\SettingsManager;
 use XcVm\Core\Database\QueryHelper;
+use XcVm\Core\Cluster\NodeRpc;
 use XcVm\Core\Http\ApiClient;
 use XcVm\Core\Util\AdminHelpers;
+use XcVm\Domain\Server\ServerRepository;
 use XcVm\Domain\Stream\StreamRepository;
 
 /**
@@ -113,5 +115,23 @@ class PlexService {
 
 	public static function forcePlex($rServerID, $rPlexID) {
 		ApiClient::systemRequest($rServerID, array('action' => 'plex_force', 'id' => $rPlexID));
+	}
+
+	/**
+	 * Kill the running Plex sync on every server with an active Plex library
+	 * (moved here from core's ServerService::killPlexSync()).
+	 *
+	 * @return bool
+	 */
+	public static function killSync() {
+		$db = self::db();
+		$db->query("SELECT DISTINCT(`server_id`) AS `server_id` FROM `watch_folders` WHERE `active` = 1 AND `type` = 'plex';");
+		$rServers = ServerRepository::getAll();
+		foreach ($db->get_rows() as $rRow) {
+			if (!empty($rServers[$rRow['server_id']]['server_online'])) {
+				NodeRpc::request($rRow['server_id'], ['action' => 'kill_plex']);
+			}
+		}
+		return true;
 	}
 }
