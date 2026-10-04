@@ -2,7 +2,7 @@
     "name": "plex",
     "hash_id": "20cd9576a466f5c1d60cc32c971a571b",
     "description": "Plex integration module",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "requires_core": ">=2.6.1",
     "environment": "any",
     "dependencies": [
