@@ -13,7 +13,8 @@ Pushing a tag runs `.github/workflows/release.yml`, which builds and uploads:
 - `module.tar.gz` — the module tree (`module.json` at the archive root)
 - `hashes.md5` — `<md5>  module.tar.gz`
 
-Locally: `make release`.
+Release notes are generated from conventional commits by git-cliff. Full
+checklist: [RELEASE.md](RELEASE.md).
 
 ## License
 

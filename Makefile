@@ -11,8 +11,11 @@ release: clean
 	@tmp=$$(mktemp) && tar \
 	  --exclude=./.git \
 	  --exclude=./.github \
+	  --exclude=./.claude \
+	  --exclude=./graphify-out \
 	  --exclude=./Makefile \
 	  --exclude=./README.md \
+	  --exclude=./RELEASE.md \
 	  --exclude=./LICENSE \
 	  --exclude=./.gitignore \
 	  -czf "$$tmp" -C . . && mv "$$tmp" $(MODULE_TAR)
