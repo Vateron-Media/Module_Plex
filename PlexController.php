@@ -4,6 +4,7 @@ namespace XcVm\Module\Plex;
 
 use XcVm\Core\Http\RequestManager;
 use XcVm\Core\Util\AdminHelpers;
+use XcVm\Core\Util\LayoutRenderer;
 use XcVm\Domain\Bouquet\BouquetService;
 use XcVm\Module\Watch\WatchService;
 use XcVm\Infrastructure\Database\DatabaseFactory;
@@ -36,14 +37,9 @@ class PlexController {
      */
     protected $viewsPath;
 
-    /** @var string Путь к layout-файлам */
-    protected $layoutsPath;
 
     public function __construct() {
         $this->viewsPath = __DIR__ . '/views';
-        $this->layoutsPath = MAIN_HOME . 'Public/Views/layouts/';
-        require_once $this->layoutsPath . 'admin.php';
-        require_once $this->layoutsPath . 'footer.php';
     }
 
     public function index() {
@@ -51,9 +47,9 @@ class PlexController {
         $rPlexServers = PlexRepository::getPlexServers();
         $_TITLE = 'Plex Sync';
 
-        renderUnifiedLayoutHeader('admin', ['_TITLE' => $_TITLE]);
+        LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
         include $this->viewsPath . '/index.php';
-        renderUnifiedLayoutFooter('admin');
+        LayoutRenderer::renderFooter('admin');
         include $this->viewsPath . '/library_scripts.php';
     }
 
@@ -70,9 +66,9 @@ class PlexController {
         $rBouquets = BouquetService::getAllSimple();
         $_TITLE = isset($rFolder) ? 'Edit Library' : 'Add Library';
 
-        renderUnifiedLayoutHeader('admin', ['_TITLE' => $_TITLE]);
+        LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
         include $this->viewsPath . '/library_edit.php';
-        renderUnifiedLayoutFooter('admin');
+        LayoutRenderer::renderFooter('admin');
         include $this->viewsPath . '/library_edit_scripts.php';
     }
 
@@ -82,9 +78,9 @@ class PlexController {
         $rBouquets = BouquetService::getAllSimple();
         $_TITLE = 'Plex Settings';
 
-        renderUnifiedLayoutHeader('admin', ['_TITLE' => $_TITLE]);
+        LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
         include $this->viewsPath . '/settings.php';
-        renderUnifiedLayoutFooter('admin');
+        LayoutRenderer::renderFooter('admin');
         include $this->viewsPath . '/settings_scripts.php';
     }
 
