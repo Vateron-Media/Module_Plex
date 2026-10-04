@@ -62,7 +62,7 @@ class PlexModule extends BaseModule {
     }
 
     public function getVersion(): string {
-        return '1.0.2';
+        return '1.1.0';
     }
 
     /**
@@ -126,6 +126,12 @@ class PlexModule extends BaseModule {
             'permission' => ['adv', 'folder_watch_settings'],
         ]);
 
+        $router->api('settings_plex_save', [PlexController::class, 'apiSaveSettings'], [
+            'permission' => ['adv', 'folder_watch_settings'],
+        ]);
+        $router->api('plex_library_save', [PlexController::class, 'apiSaveLibrary'], [
+            'permission' => ['adv', 'folder_watch_add'],
+        ]);
         $router->api('enable_plex', [PlexController::class, 'apiEnable'], [
             'permission' => ['adv', 'folder_watch_settings'],
         ]);

@@ -35,7 +35,7 @@
                 });
             }
 
-            // Save → post.php?action=settings_plex (mirrors legacy submitForm contract).
+            // Save → the module's settings_plex_save action (same JSON contract as post.php had).
             $('#plex-settings-form').on('submit', function(e) {
                 e.preventDefault();
                 var btn = document.getElementById('save-settings');
@@ -44,7 +44,7 @@
                 }
                 var fd = new FormData(this);
                 fd.append('submit_settings', '1');
-                fetch('post.php?action=settings_plex', {
+                fetch('./api?action=settings_plex_save', {
                         method: 'POST',
                         body: fd,
                         headers: {

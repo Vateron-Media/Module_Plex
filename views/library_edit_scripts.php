@@ -73,9 +73,9 @@
                 var rButtons = $(':input[type="submit"]');
                 rButtons.prop('disabled', true);
                 // New-UI submit: the legacy submitForm()/rCurrentPage globals are not
-                // loaded by the Bootstrap 5 shell — POST straight to post.php (action
-                // plex_add → PlexService::processPlexSync) and follow its JSON.
-                fetch('post.php?action=plex_add', { method: 'POST', body: new FormData($("form")[0]), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                // loaded by the Bootstrap 5 shell — POST to the module's plex_library_save
+                // action (PlexService::processPlexSync) and follow its JSON.
+                fetch('./api?action=plex_library_save', { method: 'POST', body: new FormData($("form")[0]), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                     .then(function (r) { return r.text(); })
                     .then(function (txt) {
                         var d; try { d = JSON.parse(txt); } catch (err) { d = { result: false }; }
