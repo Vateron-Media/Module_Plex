@@ -56,71 +56,45 @@ use XcVm\Domain\Stream\CategoryService;
                     </div>
                 </div>
 
-                <!-- Movie Categories -->
-                <div class="tab-pane fade" id="categories">
-                    <p class="text-body-secondary">Select a Category and / or Bouquet to apply to each Genre.</p>
-                    <?php
-                    $db->query('SELECT * FROM `watch_categories` WHERE `type` = 3 ORDER BY `genre` ASC;');
-                    if ($db->num_rows() > 0) {
-                        foreach ($db->get_rows() as $rRow) {
-                    ?>
+                <?php
+                // Tab id + form field prefixes per library type; PlexService::editPlexSettings() reads them back.
+                $rGenreTabs = array(
+                    'movie' => array('categories', 'genre', 'bouquet'),
+                    'series' => array('categories-tv', 'genretv', 'bouquettv'),
+                );
+                foreach ($rGenreTabs as $rType => list($rTab, $rGenreField, $rBouquetField)) :
+                    $rCategories = CategoryService::getAllByType($rType);
+                    $rRows = $rGenres[$rType];
+                    ksort($rRows);
+                ?>
+                    <div class="tab-pane fade" id="<?= $rTab; ?>">
+                        <p class="text-body-secondary">Select a Category and / or Bouquet to apply to each Genre.</p>
+                        <?php foreach ($rRows as $rRow) :
+                            $rGenreID = intval($rRow['genre_id']);
+                            $rRowBouquets = (array) json_decode($rRow['bouquets'], true);
+                        ?>
                             <div class="row mb-4">
-                                <label class="col-md-2 col-form-label" for="genre_<?= $rRow['genre_id']; ?>"><?= $rRow['genre']; ?></label>
+                                <label class="col-md-2 col-form-label" for="<?= $rGenreField . '_' . $rGenreID; ?>"><?= htmlspecialchars($rRow['genre']); ?></label>
                                 <div class="col-md-4">
-                                    <select name="genre_<?= $rRow['genre_id']; ?>" id="genre_<?= $rRow['genre_id']; ?>" class="form-select select2">
+                                    <select name="<?= $rGenreField . '_' . $rGenreID; ?>" id="<?= $rGenreField . '_' . $rGenreID; ?>" class="form-select select2">
                                         <option value="0" <?= intval($rRow['category_id']) == 0 ? 'selected' : ''; ?>>Do Not Use</option>
-                                        <?php foreach (CategoryService::getAllByType('movie') as $rCategory): ?>
-                                            <option value="<?= $rCategory['id']; ?>" <?= intval($rRow['category_id']) == intval($rCategory['id']) ? 'selected' : ''; ?>><?= $rCategory['category_name']; ?></option>
+                                        <?php foreach ($rCategories as $rCategory) : ?>
+                                            <option value="<?= intval($rCategory['id']); ?>" <?= intval($rRow['category_id']) == intval($rCategory['id']) ? 'selected' : ''; ?>><?= htmlspecialchars($rCategory['category_name']); ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
-                                <label class="col-md-2 col-form-label" for="bouquet_<?= $rRow['genre_id']; ?>">Bouquets</label>
+                                <label class="col-md-2 col-form-label" for="<?= $rBouquetField . '_' . $rGenreID; ?>">Bouquets</label>
                                 <div class="col-md-4">
-                                    <select name="bouquet_<?= $rRow['genre_id']; ?>[]" id="bouquet_<?= $rRow['genre_id']; ?>" class="form-select select2" multiple="multiple" data-placeholder="Choose...">
-                                        <?php foreach ((is_array($rBouquets ?? null) ? $rBouquets : []) as $rBouquet): ?>
-                                            <option value="<?= $rBouquet['id']; ?>" <?= in_array(intval($rBouquet['id']), (array) json_decode($rRow['bouquets'], true)) ? 'selected' : ''; ?>><?= $rBouquet['bouquet_name']; ?></option>
+                                    <select name="<?= $rBouquetField . '_' . $rGenreID; ?>[]" id="<?= $rBouquetField . '_' . $rGenreID; ?>" class="form-select select2" multiple="multiple" data-placeholder="Choose...">
+                                        <?php foreach ((is_array($rBouquets ?? null) ? $rBouquets : []) as $rBouquet) : ?>
+                                            <option value="<?= intval($rBouquet['id']); ?>" <?= in_array(intval($rBouquet['id']), $rRowBouquets) ? 'selected' : ''; ?>><?= htmlspecialchars($rBouquet['bouquet_name']); ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
                             </div>
-                    <?php
-                        }
-                    }
-                    ?>
-                </div>
-
-                <!-- TV Categories -->
-                <div class="tab-pane fade" id="categories-tv">
-                    <p class="text-body-secondary">Select a Category and / or Bouquet to apply to each Genre.</p>
-                    <?php
-                    $db->query('SELECT * FROM `watch_categories` WHERE `type` = 4 ORDER BY `genre` ASC;');
-                    if ($db->num_rows() > 0) {
-                        foreach ($db->get_rows() as $rRow) {
-                    ?>
-                            <div class="row mb-4">
-                                <label class="col-md-2 col-form-label" for="genretv_<?= $rRow['genre_id']; ?>"><?= $rRow['genre']; ?></label>
-                                <div class="col-md-4">
-                                    <select name="genretv_<?= $rRow['genre_id']; ?>" id="genretv_<?= $rRow['genre_id']; ?>" class="form-select select2">
-                                        <option value="0" <?= intval($rRow['category_id']) == 0 ? 'selected' : ''; ?>>Do Not Use</option>
-                                        <?php foreach (CategoryService::getAllByType('series') as $rCategory): ?>
-                                            <option value="<?= $rCategory['id']; ?>" <?= intval($rRow['category_id']) == intval($rCategory['id']) ? 'selected' : ''; ?>><?= $rCategory['category_name']; ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <label class="col-md-2 col-form-label" for="bouquettv_<?= $rRow['genre_id']; ?>">Bouquets</label>
-                                <div class="col-md-4">
-                                    <select name="bouquettv_<?= $rRow['genre_id']; ?>[]" id="bouquettv_<?= $rRow['genre_id']; ?>" class="form-select select2" multiple="multiple" data-placeholder="Choose...">
-                                        <?php foreach ((is_array($rBouquets ?? null) ? $rBouquets : []) as $rBouquet): ?>
-                                            <option value="<?= $rBouquet['id']; ?>" <?= in_array(intval($rBouquet['id']), (array) json_decode($rRow['bouquets'], true)) ? 'selected' : ''; ?>><?= $rBouquet['bouquet_name']; ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-                    <?php
-                        }
-                    }
-                    ?>
-                </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endforeach; ?>
             </div>
 
             <div class="text-end mt-4">

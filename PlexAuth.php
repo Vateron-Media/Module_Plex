@@ -40,8 +40,12 @@ class PlexAuth {
 		return md5($ip . ':' . $port);
 	}
 
+	private static function tokenFile($serverKey) {
+		return CONFIG_PATH . 'plex/plex_token_' . $serverKey . '.json';
+	}
+
 	public static function getCachedPlexToken($serverKey) {
-		$cacheFile = CONFIG_PATH . 'plex/plex_token_' . $serverKey . '.json';
+		$cacheFile = self::tokenFile($serverKey);
 		if (!file_exists($cacheFile)) {
 			return null;
 		}
@@ -83,31 +87,12 @@ class PlexAuth {
 	}
 
 	public static function checkPlexToken($rIP, $rPort, $rToken) {
-		$checkURL = 'http://' . $rIP . ':' . $rPort . '/myplex/account?X-Plex-Token=' . $rToken;
-
-		$ch = curl_init($checkURL);
-		curl_setopt_array($ch, [
-			CURLOPT_RETURNTRANSFER => true,
-			CURLOPT_CONNECTTIMEOUT => 10,
-			CURLOPT_TIMEOUT        => 10,
-			CURLOPT_SSL_VERIFYPEER => false,
-		]);
-
-		$data = curl_exec($ch);
-		curl_close($ch);
-
-		$xml = simplexml_load_string($data);
-		if ($xml === false) {
-			return '';
-		}
-
-		$json = json_decode(json_encode($xml), true);
-
-		return (isset($json['@attributes']['signInState']) && $json['@attributes']['signInState'] === 'ok') ? $rToken : '';
+		$rAccount = PlexClient::get(PlexClient::url($rIP, $rPort, $rToken, '/myplex/account'));
+		return (($rAccount['@attributes']['signInState'] ?? '') === 'ok') ? $rToken : '';
 	}
 
 	public static function cachePlexToken($serverKey, $token) {
-		$cacheFile = CONFIG_PATH . 'plex/plex_token_' . $serverKey . '.json';
+		$cacheFile = self::tokenFile($serverKey);
 		$data = [
 			'token'     => $token,
 			'cached_at' => time(),

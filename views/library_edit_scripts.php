@@ -1,23 +1,10 @@
+<?php include __DIR__ . '/common_scripts.php'; ?>
 <script>
     (function () {
         var $ = window.jQuery;
         if (!$) {
             return;
         }
-
-        // Lightweight input filter (the legacy shell helper is gone in the new UI).
-        $.fn.inputFilter = function (inputFilter) {
-            return this.on("input keydown keyup mousedown mouseup select contextmenu drop", function () {
-                if (inputFilter(this.value)) {
-                    this.oldValue = this.value;
-                    this.oldSelectionStart = this.selectionStart;
-                    this.oldSelectionEnd = this.selectionEnd;
-                } else if (this.hasOwnProperty("oldValue")) {
-                    this.value = this.oldValue;
-                    this.setSelectionRange(this.oldSelectionStart, this.oldSelectionEnd);
-                }
-            });
-        };
 
         function evaluateDirectSource() {
             var disabled = $("#direct_proxy").is(":checked");
@@ -45,9 +32,9 @@
                 if (($("#plex_ip").val().length > 0) && ($("#plex_port").val().length > 0) && ($("#username").val().length > 0) && ($("#password").val().length > 0)) {
                     $("#library_id").empty().trigger("change");
                     $.getJSON("./api?action=plex_sections&ip=" + encodeURIComponent($("#plex_ip").val()) + "&port=" + encodeURIComponent($("#plex_port").val()) + "&username=" + encodeURIComponent($("#username").val()) + "&password=" + encodeURIComponent($("#password").val()), function (data) {
-                        rLibraries = [];
+                        var rLibraries = [];
                         if (data.result == true) {
-                            for (i in data.data) {
+                            for (var i in data.data) {
                                 rLibraries.push({
                                     "key": data.data[i]["@attributes"]["key"],
                                     "title": data.data[i]["@attributes"]["title"]
@@ -68,25 +55,10 @@
                 evaluateDirectSource();
             });
             evaluateDirectSource();
-            $("form").submit(function (e) {
+            $("#library-form").submit(function (e) {
                 e.preventDefault();
-                var rButtons = $(':input[type="submit"]');
-                rButtons.prop('disabled', true);
-                // New-UI submit: the legacy submitForm()/rCurrentPage globals are not
-                // loaded by the Bootstrap 5 shell — POST to the module's plex_library_save
-                // action (PlexService::processPlexSync) and follow its JSON.
-                fetch('./api?action=plex_library_save', { method: 'POST', body: new FormData($("form")[0]), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                    .then(function (r) { return r.text(); })
-                    .then(function (txt) {
-                        var d; try { d = JSON.parse(txt); } catch (err) { d = { result: false }; }
-                        if (d && d.result && d.location) { window.location.href = d.location; return; }
-                        rButtons.prop('disabled', false);
-                        if (window.xcToast) { xcToast('An error occurred while processing your request.', 'error'); }
-                    })
-                    .catch(function () {
-                        rButtons.prop('disabled', false);
-                        if (window.xcToast) { xcToast('An error occurred while processing your request.', 'error'); }
-                    });
+                // New-UI submit: POST to the module's plex_library_save action (PlexService::processPlexSync).
+                plexSubmitForm(this, 'plex_library_save', 'An error occurred while processing your request.');
             });
             $("#plex_port").inputFilter(function (value) {
                 return /^\d*$/.test(value);

@@ -24,28 +24,15 @@ class PlexService {
 
     use \XcVm\Infrastructure\Database\DatabaseAware;
 
+	/** "genre_<id>" / "genretv_<id>" form fields → watch_categories.type; their bouquets come in "bouquet_<id>" / "bouquettv_<id>". */
+	private const GENRE_FIELDS = array('genre' => 3, 'genretv' => 4);
+
 	public static function editPlexSettings($rData) {
 		foreach ($rData as $rKey => $rValue) {
 			$rSplit = explode('_', $rKey);
-			if ($rSplit[0] == 'genre') {
-				if (isset($rData['bouquet_' . $rSplit[1]])) {
-					$rBouquets = '[' . implode(',', array_map('intval', $rData['bouquet_' . $rSplit[1]])) . ']';
-				} else {
-					$rBouquets = '[]';
-				}
-				self::db()->query('UPDATE `watch_categories` SET `category_id` = ?, `bouquets` = ? WHERE `genre_id` = ? AND `type` = 3;', $rValue, $rBouquets, $rSplit[1]);
-			}
-		}
-
-		foreach ($rData as $rKey => $rValue) {
-			$rSplit = explode('_', $rKey);
-			if ($rSplit[0] == 'genretv') {
-				if (isset($rData['bouquettv_' . $rSplit[1]])) {
-					$rBouquets = '[' . implode(',', array_map('intval', $rData['bouquettv_' . $rSplit[1]])) . ']';
-				} else {
-					$rBouquets = '[]';
-				}
-				self::db()->query('UPDATE `watch_categories` SET `category_id` = ?, `bouquets` = ? WHERE `genre_id` = ? AND `type` = 4;', $rValue, $rBouquets, $rSplit[1]);
+			if (isset(self::GENRE_FIELDS[$rSplit[0]], $rSplit[1])) {
+				$rBouquets = $rData[str_replace('genre', 'bouquet', $rSplit[0]) . '_' . $rSplit[1]] ?? array();
+				self::db()->query('UPDATE `watch_categories` SET `category_id` = ?, `bouquets` = ? WHERE `genre_id` = ? AND `type` = ?;', $rValue, self::idList($rBouquets), $rSplit[1], self::GENRE_FIELDS[$rSplit[0]]);
 			}
 		}
 
@@ -65,17 +52,13 @@ class PlexService {
 		if (is_array($rData['server_id'])) {
 			$rServers = $rData['server_id'];
 			$rArray['server_id'] = intval(array_shift($rServers));
-			$rArray['server_add'] = '[' . implode(',', array_map('intval', $rServers)) . ']';
+			$rArray['server_add'] = self::idList($rServers);
 		} else {
 			$rArray['server_id'] = intval($rData['server_id']);
 			$rArray['server_add'] = null;
 		}
 
-		if (isset($rData['edit'])) {
-			self::db()->query('SELECT COUNT(*) AS `count` FROM `watch_folders` WHERE `directory` = ? AND `server_id` = ? AND `plex_ip` = ? AND `id` <> ?;', $rData['library_id'], $rArray['server_id'], $rData['plex_ip'], $rArray['id']);
-		} else {
-			self::db()->query('SELECT COUNT(*) AS `count` FROM `watch_folders` WHERE `directory` = ? AND `server_id` = ? AND `plex_ip` = ?;', $rData['library_id'], $rArray['server_id'], $rData['plex_ip']);
-		}
+		self::db()->query('SELECT COUNT(*) AS `count` FROM `watch_folders` WHERE `directory` = ? AND `server_id` = ? AND `plex_ip` = ? AND `id` <> ?;', $rData['library_id'], $rArray['server_id'], $rData['plex_ip'], intval($rArray['id'] ?? 0));
 
 		if (0 < self::db()->get_row()['count']) {
 			return array('status' => STATUS_EXISTS_DIR, 'data' => $rData);
@@ -96,12 +79,10 @@ class PlexService {
 			$rArray[$rKey] = isset($rData[$rKey]) ? 1 : 0;
 		}
 
-		$overrideBouquets = $rData['override_bouquets'] ?? [];
-		$fallbackBouquets = $rData['fallback_bouquets'] ?? [];
 		$rArray['category_id'] = intval($rData['override_category']);
 		$rArray['fb_category_id'] = intval($rData['fallback_category']);
-		$rArray['bouquets'] = '[' . implode(',', array_map('intval', $overrideBouquets)) . ']';
-		$rArray['fb_bouquets'] = '[' . implode(',', array_map('intval', $fallbackBouquets)) . ']';
+		$rArray['bouquets'] = self::idList($rData['override_bouquets'] ?? array());
+		$rArray['fb_bouquets'] = self::idList($rData['fallback_bouquets'] ?? array());
 		$rArray['target_container'] = ($rData['target_container'] == 'auto' ? null : $rData['target_container']);
 		$rPrepare = QueryHelper::prepareArray($rArray);
 		$rQuery = 'REPLACE INTO `watch_folders`(' . $rPrepare['columns'] . ') VALUES(' . $rPrepare['placeholder'] . ');';
@@ -133,5 +114,13 @@ class PlexService {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * @param array $rIDs
+	 * @return string JSON list of ints, as stored in the *_bouquets / server_add columns.
+	 */
+	private static function idList($rIDs) {
+		return '[' . implode(',', array_map('intval', (array) $rIDs)) . ']';
 	}
 }

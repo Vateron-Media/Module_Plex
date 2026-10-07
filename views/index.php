@@ -40,14 +40,14 @@
 								<i class="icon-base ti tabler-square-rounded-filled text-secondary"></i>
 							<?php endif; ?>
 						</td>
-						<td class="text-center"><?= $rServer['plex_ip']; ?></td>
+						<td class="text-center"><?= htmlspecialchars($rServer['plex_ip']); ?></td>
 						<td>
-							<?= $rServers[$rServer['server_id']]['server_name']; ?>
+							<?= htmlspecialchars($rServers[$rServer['server_id']]['server_name'] ?? ''); ?>
 							<?php if ($rServerAdd > 0) : ?>
 								<span class="badge bg-label-info">+<?= $rServerAdd; ?></span>
 							<?php endif; ?>
 						</td>
-						<td><?= $rLibraryName; ?></td>
+						<td><?= htmlspecialchars($rLibraryName); ?></td>
 						<td class="text-center"><?= $rDate; ?></td>
 						<td class="text-center">
 							<div class="d-inline-flex gap-1">

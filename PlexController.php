@@ -7,15 +7,14 @@ use XcVm\Core\Util\AdminHelpers;
 use XcVm\Core\Util\LayoutRenderer;
 use XcVm\Domain\Bouquet\BouquetService;
 use XcVm\Module\Watch\WatchService;
-use XcVm\Infrastructure\Database\DatabaseFactory;
 
 /**
  * Plex Module Controller
  *
- * Обрабатывает все маршруты модуля Plex:
- * - Список Plex Sync серверов (index)
- * - Добавление/редактирование библиотеки (add)
- * - Настройки Plex (settings)
+ * Handles every Plex module route:
+ * - Plex Sync server list (index)
+ * - Add/edit a library (add)
+ * - Plex settings (settings)
  * - API: enable/disable/kill/library/sections actions
  *
  * @see PlexService
@@ -32,7 +31,7 @@ use XcVm\Infrastructure\Database\DatabaseFactory;
 class PlexController {
 
     /**
-     * Путь к директории views модуля
+     * Path to the module's views directory
      * @var string
      */
     protected $viewsPath;
@@ -43,49 +42,45 @@ class PlexController {
     }
 
     public function index() {
-        global $rMobile, $rSettings, $rServers;
-        $rPlexServers = PlexRepository::getPlexServers();
-        $_TITLE = 'Plex Sync';
-
-        LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
-        include $this->viewsPath . '/index.php';
-        LayoutRenderer::renderFooter('admin');
-        include $this->viewsPath . '/library_scripts.php';
+        $this->render('Plex Sync', 'index', array('rPlexServers' => PlexRepository::getPlexServers()));
     }
 
     public function add() {
-        global $rMobile, $rSettings, $rPermissions, $language;
-
-        if (isset(RequestManager::getAll()['id'])) {
-            $rFolder = WatchService::getWatchFolder(RequestManager::getAll()['id']);
-            if (!$rFolder) {
-                AdminHelpers::goHome();
-            }
+        $rID = RequestManager::getAll()['id'] ?? null;
+        $rFolder = ($rID === null ? null : WatchService::getWatchFolder($rID));
+        if ($rID !== null && !$rFolder) {
+            AdminHelpers::goHome();
         }
-
-        $rBouquets = BouquetService::getAllSimple();
-        $_TITLE = isset($rFolder) ? 'Edit Library' : 'Add Library';
-
-        LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
-        include $this->viewsPath . '/library_edit.php';
-        LayoutRenderer::renderFooter('admin');
-        include $this->viewsPath . '/library_edit_scripts.php';
+        $rVars = array('rBouquets' => BouquetService::getAllSimple());
+        if ($rFolder) {
+            $rVars['rFolder'] = $rFolder;
+        }
+        $this->render($rFolder ? 'Edit Library' : 'Add Library', 'library_edit', $rVars);
     }
 
     public function settings() {
-        global $rMobile, $rSettings;
-        $db = DatabaseFactory::get();
-        $rBouquets = BouquetService::getAllSimple();
-        $_TITLE = 'Plex Settings';
+        $this->render('Plex Settings', 'settings', array(
+            'rBouquets' => BouquetService::getAllSimple(),
+            'rGenres' => array('movie' => PlexCron::getPlexCategories(3), 'series' => PlexCron::getPlexCategories(4)),
+        ));
+    }
+
+    /**
+     * Admin shell around a module view, then its <view>_scripts.php.
+     * $_STATUS (the ?status= banner) is a global set by core's AdminScopeBootstrap.
+     */
+    private function render($_TITLE, $rView, array $rVars) {
+        global $rMobile, $rSettings, $rServers, $rPermissions, $language, $_STATUS;
+        extract($rVars);
 
         LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
-        include $this->viewsPath . '/settings.php';
+        include $this->viewsPath . '/' . $rView . '.php';
         LayoutRenderer::renderFooter('admin');
-        include $this->viewsPath . '/settings_scripts.php';
+        include $this->viewsPath . '/' . $rView . '_scripts.php';
     }
 
     // ───────────────────────────────────────────────────────────
-    //  API-действия (JSON)
+    //  API actions (JSON)
     // ───────────────────────────────────────────────────────────
 
     /** action=settings_plex_save — save the Plex Settings form (POST only). */
@@ -115,73 +110,54 @@ class PlexController {
     /** The JSON the forms expect: redirect to $rPage on success, else the error. */
     private static function reply(array $rReturn, string $rPage) {
         if ($rReturn['status'] == STATUS_SUCCESS) {
-            echo json_encode(['result' => true, 'location' => $rPage . '?status=' . intval($rReturn['status']), 'status' => $rReturn['status']]);
-        } else {
-            echo json_encode(['result' => false, 'data' => $rReturn['data'] ?? null, 'status' => $rReturn['status']]);
+            self::json(['result' => true, 'location' => $rPage . '?status=' . intval($rReturn['status']), 'status' => $rReturn['status']]);
         }
+        self::json(['result' => false, 'data' => $rReturn['data'] ?? null, 'status' => $rReturn['status']]);
+    }
+
+    private static function json(array $rData) {
+        echo json_encode($rData);
         exit();
     }
 
     public function apiEnable() {
         PlexRepository::enableAll();
-        echo json_encode(['result' => true]);
-        exit();
+        self::json(['result' => true]);
     }
 
     public function apiDisable() {
         PlexRepository::disableAll();
-        echo json_encode(['result' => true]);
-        exit();
+        self::json(['result' => true]);
     }
 
     public function apiKill() {
         PlexService::killSync();
-        echo json_encode(['result' => true]);
-        exit();
+        self::json(['result' => true]);
     }
 
     public function apiLibrary() {
-        $rSub = RequestManager::getAll()['sub'] ?? '';
-        $rFolderID = RequestManager::getAll()['folder_id'] ?? 0;
+        $rRequest = RequestManager::getAll();
+        $rFolderID = $rRequest['folder_id'] ?? 0;
+        $rSub = $rRequest['sub'] ?? '';
 
         if ($rSub === 'delete') {
             WatchService::deleteWatchFolder($rFolderID);
-            echo json_encode(['result' => true]);
-            exit();
+            self::json(['result' => true]);
         }
-
-        if ($rSub === 'force') {
-            $rFolder = WatchService::getWatchFolder($rFolderID);
-            if ($rFolder) {
-                PlexService::forcePlex($rFolder['server_id'], $rFolder['id']);
-                echo json_encode(['result' => true]);
-                exit();
-            }
+        if ($rSub === 'force' && ($rFolder = WatchService::getWatchFolder($rFolderID))) {
+            PlexService::forcePlex($rFolder['server_id'], $rFolder['id']);
+            self::json(['result' => true]);
         }
-
-        echo json_encode(['result' => false]);
-        exit();
+        self::json(['result' => false]);
     }
 
     public function apiSections() {
-        $rIP       = RequestManager::getAll()['ip'] ?? '';
-        $rPort     = RequestManager::getAll()['port'] ?? '';
-        $rUsername  = RequestManager::getAll()['username'] ?? '';
-        $rPassword = RequestManager::getAll()['password'] ?? '';
+        $rRequest = RequestManager::getAll();
+        $rIP = $rRequest['ip'] ?? '';
+        $rPort = $rRequest['port'] ?? '';
 
-        $rToken = PlexAuth::getPlexToken($rIP, $rPort, $rUsername, $rPassword);
-        if (!$rToken) {
-            echo json_encode(['result' => false]);
-            exit();
-        }
-
+        $rToken = PlexAuth::getPlexToken($rIP, $rPort, $rRequest['username'] ?? '', $rRequest['password'] ?? '');
         $rSections = PlexRepository::getPlexSections($rIP, $rPort, $rToken);
-
-        if ($rSections && count($rSections) > 0) {
-            echo json_encode(['result' => true, 'data' => $rSections]);
-        } else {
-            echo json_encode(['result' => false]);
-        }
-        exit();
+        self::json($rSections ? ['result' => true, 'data' => $rSections] : ['result' => false]);
     }
 }

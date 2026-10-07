@@ -15,8 +15,6 @@ final class PlexItemInsertStreamTest extends TestCase {
 
     private QueryLogDb $db;
 
-    private const INSERT = 'REPLACE INTO `streams`(`type`, `stream_display_name`) VALUES(?, ?);';
-
     protected function setUp(): void {
         $rInner = new TestDb();
         foreach (array('streams', 'streams_servers', 'streams_episodes') as $rTable) {
@@ -34,7 +32,7 @@ final class PlexItemInsertStreamTest extends TestCase {
     }
 
     public function testNewStreamIsLinkedToEveryServer(): void {
-        $rID = PlexItem::insertStream(self::INSERT, array(2, 'Movie'), array(1, 2));
+        $rID = PlexItem::insertStream(array('type' => 2, 'stream_display_name' => 'Movie'), array(1, 2));
 
         $this->assertGreaterThan(0, (int) $rID);
         $this->db->query('SELECT `server_id` FROM `streams_servers` WHERE `stream_id` = ? ORDER BY `server_id`;', $rID);
@@ -44,19 +42,19 @@ final class PlexItemInsertStreamTest extends TestCase {
     public function testFailedServerLinkLeavesNoServerlessStream(): void {
         $this->db->rRefuse = '/streams_servers/';
 
-        $this->assertFalse(PlexItem::insertStream(self::INSERT, array(2, 'Movie'), array(1)));
+        $this->assertFalse(PlexItem::insertStream(array('type' => 2, 'stream_display_name' => 'Movie'), array(1)));
         $this->assertSame(0, $this->rowCount('streams'));
     }
 
     public function testRepeatedServerViolatesUniqueKeyAndRollsBack(): void {
-        // Why PlexItem::run() de-duplicates $rServers before calling in.
-        $this->assertFalse(PlexItem::insertStream(self::INSERT, array(2, 'Movie'), array(1, 1)));
+        // Why PlexItem::servers() de-duplicates the server list.
+        $this->assertFalse(PlexItem::insertStream(array('type' => 2, 'stream_display_name' => 'Movie'), array(1, 1)));
         $this->assertSame(0, $this->rowCount('streams'));
         $this->assertSame(0, $this->rowCount('streams_servers'));
     }
 
     public function testEpisodeRowIsWrittenWithTheStream(): void {
-        $rID = PlexItem::insertStream(self::INSERT, array(5, 'Episode'), array(1), array(2, 7, 3));
+        $rID = PlexItem::insertStream(array('type' => 5, 'stream_display_name' => 'Episode'), array(1), array(2, 7, 3));
 
         $this->db->query('SELECT `season_num`, `series_id`, `episode_num` FROM `streams_episodes` WHERE `stream_id` = ?;', $rID);
         $this->assertSame(array('season_num' => 2, 'series_id' => 7, 'episode_num' => 3), array_map('intval', $this->db->get_row()));
@@ -65,7 +63,7 @@ final class PlexItemInsertStreamTest extends TestCase {
     public function testFailedEpisodeRowRollsBackStreamAndServers(): void {
         $this->db->rRefuse = '/streams_episodes/';
 
-        $this->assertFalse(PlexItem::insertStream(self::INSERT, array(5, 'Episode'), array(1), array(2, 7, 3)));
+        $this->assertFalse(PlexItem::insertStream(array('type' => 5, 'stream_display_name' => 'Episode'), array(1), array(2, 7, 3)));
         $this->assertSame(0, $this->rowCount('streams'));
         $this->assertSame(0, $this->rowCount('streams_servers'));
     }
@@ -73,7 +71,7 @@ final class PlexItemInsertStreamTest extends TestCase {
     public function testInsideCallerTransactionCommitIsLeftToTheCaller(): void {
         $this->db->beginTransaction();
 
-        $this->assertGreaterThan(0, (int) PlexItem::insertStream(self::INSERT, array(2, 'Movie'), array(1)));
+        $this->assertGreaterThan(0, (int) PlexItem::insertStream(array('type' => 2, 'stream_display_name' => 'Movie'), array(1)));
         $this->db->rollback();
 
         $this->assertSame(0, $this->rowCount('streams'));

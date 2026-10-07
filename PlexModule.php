@@ -14,34 +14,34 @@ use XcVm\Infrastructure\Database\DatabaseFactory;
 /**
  * Plex Module
  *
- * Модуль Plex Sync Integration.
- * Регистрирует сервисы, маршруты, API-действия и крон-задачи.
+ * Plex Sync integration module.
+ * Registers services, routes, API actions and cron jobs.
  *
  * ──────────────────────────────────────────────────────────────────
- * Что включает:
+ * Contents:
  * ──────────────────────────────────────────────────────────────────
  *
- *   Сервисы:
- *     - PlexService     — CRUD Plex Sync, настройки, force
- *     - PlexRepository  — получение Plex серверов и секций
- *     - PlexAuth        — аутентификация Plex (getToken, checkToken)
- *     - PlexCron        — крон синхронизации
- *     - PlexItem        — CLI обработка элементов
+ *   Services:
+ *     - PlexService     — Plex Sync CRUD, settings, force
+ *     - PlexRepository  — Plex servers and sections
+ *     - PlexAuth        — Plex authentication (getToken, checkToken)
+ *     - PlexCron        — sync cron
+ *     - PlexItem        — CLI item import
  *
- *   Контроллер:
- *     - PlexController  — обработка HTTP-запросов и API
+ *   Controller:
+ *     - PlexController  — HTTP requests and API
  *
- *   Страницы:
- *     - plex            — список Plex серверов
- *     - plex/add        — добавление/редактирование библиотеки
- *     - plex/settings   — настройки Plex (settings_plex)
+ *   Pages:
+ *     - plex            — Plex server list
+ *     - plex/add        — add/edit a library
+ *     - plex/settings   — Plex settings (settings_plex)
  *
- *   API-действия:
- *     - enable_plex     — включить все серверы
- *     - disable_plex    — отключить все серверы
- *     - kill_plex       — убить процессы
- *     - library         — удалить/запустить библиотеку
- *     - plex_sections   — получить секции Plex-сервера
+ *   API actions:
+ *     - enable_plex     — enable all servers
+ *     - disable_plex    — disable all servers
+ *     - kill_plex       — kill running processes
+ *     - library         — delete/force a library
+ *     - plex_sections   — list a Plex server's sections
  *
  * @see PlexService
  * @see PlexRepository

@@ -39,15 +39,6 @@ class PlexRepository {
 		if (!$rToken) {
 			return array();
 		}
-
-		$URL = 'http://' . $rIP . ':' . $rPort . '/library/sections?X-Plex-Token=' . $rToken;
-		$rSections = json_decode(json_encode(simplexml_load_string(file_get_contents($URL))), true);
-		if (!isset($rSections['Directory'])) {
-			return array();
-		}
-		if (isset($rSections['Directory']['@attributes'])) {
-			$rSections['Directory'] = array($rSections['Directory']);
-		}
-		return $rSections['Directory'];
+		return PlexClient::makeArray(PlexClient::get(PlexClient::url($rIP, $rPort, $rToken, '/library/sections'))['Directory'] ?? null);
 	}
 }

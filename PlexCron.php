@@ -6,7 +6,10 @@ use XcVm\Core\Config\SettingsManager;
 use XcVm\Core\Process\Multithread;
 
 /**
- * PlexCron — модуль синхронизации Plex (крон-задача).
+ * PlexCron — the Plex sync cron job.
+ *
+ * Picks this server's Plex folders, caches what is already imported, scans the
+ * library and hands new/changed items to `plex_item` workers.
  *
  * @package XC_VM_Module_Plex
  * @author  Divarion_D <https://github.com/Divarion-D>
@@ -15,27 +18,33 @@ use XcVm\Core\Process\Multithread;
  * @license AGPL-3.0 https://www.gnu.org/licenses/agpl-3.0.html
  */
 
-require_once __DIR__ . '/../../Core/Process/Thread.php';
-require_once __DIR__ . '/../../Core/Process/Multithread.php';
-
 class PlexCron {
     use \XcVm\Infrastructure\Database\DatabaseAware;
 
+    /** Items per page when walking a library. */
+    private const PAGE_SIZE = 100;
+
+    /** Folder settings passed to the worker as-is. */
+    private const FOLDER_SETTINGS = array(
+        'read_native', 'movie_symlink', 'remove_subtitles', 'auto_encode', 'auto_upgrade', 'transcode_profile_id',
+        'fb_bouquets', 'store_categories', 'category_id', 'bouquets', 'fb_category_id', 'check_tmdb',
+        'target_container', 'server_add', 'direct_proxy',
+    );
 
     /**
-     * Получить категории Plex из БД.
+     * Plex genre categories from the DB, keyed by genre name.
      *
-     * @param int|null $rType Тип категории (3=movie, 4=show)
+     * @param int|null $rType Category type (3=movie, 4=show)
      * @return array
      */
     public static function getPlexCategories($rType = null) {
         $db = self::db();
-        $rReturn = array();
         if ($rType) {
             $db->query('SELECT * FROM `watch_categories` WHERE `type` = ? ORDER BY `genre_id` ASC;', $rType);
         } else {
             $db->query('SELECT * FROM `watch_categories` ORDER BY `genre_id` ASC;');
         }
+        $rReturn = array();
         foreach ($db->get_rows() as $rRow) {
             $rReturn[$rRow['genre']] = $rRow;
         }
@@ -43,420 +52,350 @@ class PlexCron {
     }
 
     /**
-     * Выполнить HTTP-запрос через cURL.
-     *
-     * @param string $rURL
-     * @return string|false
-     */
-    public static function readURL($rURL) {
-        $rCurl = curl_init($rURL);
-        curl_setopt($rCurl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($rCurl, CURLOPT_CONNECTTIMEOUT, 10);
-        curl_setopt($rCurl, CURLOPT_TIMEOUT, 10);
-        return curl_exec($rCurl);
-    }
-
-    /**
-     * Нормализовать XML-массив (одиночный элемент → массив элементов).
-     *
-     * @param array $rArray
-     * @return array
-     */
-    public static function makeArray($rArray) {
-        if (isset($rArray['@attributes'])) {
-            $rArray = array($rArray);
-        }
-        return $rArray;
-    }
-
-    /**
-     * Получить букет по ID.
-     *
-     * @param int $rID
-     * @return array|null
-     */
-    public static function getBouquet($rID) {
-        $db = self::db();
-        $db->query('SELECT * FROM `bouquets` WHERE `id` = ?;', $rID);
-        if ($db->num_rows() == 1) {
-            return $db->get_row();
-        }
-    }
-
-    /**
-     * Проверить и создать новые категории из временных файлов.
+     * Add to watch_categories the genres workers wrote to *.pcat.
      */
     public static function checkCategories() {
         $db = self::db();
-        $rPlexCategories = array('movie' => self::getPlexCategories(3), 'show' => self::getPlexCategories(4));
-        $rCategories = glob(WATCH_TMP_PATH . '*.pcat');
-        $rCatID = array('movie' => 1, 'show' => 1);
-        $db->query('SELECT MAX(`genre_id`) AS `max` FROM `watch_categories` WHERE `type` = 3;');
-        $rCatID['movie'] = intval($db->get_row()['max']);
-        $db->query('SELECT MAX(`genre_id`) AS `max` FROM `watch_categories` WHERE `type` = 4;');
-        $rCatID['show'] = intval($db->get_row()['max']);
-        foreach ($rCategories as $a539efc67de58f76) {
-            $rCategory = json_decode(file_get_contents($a539efc67de58f76), true);
-            if (in_array($rCategory['title'], array_keys($rPlexCategories[$rCategory['type']]))) {
-            } else {
-                $rCatID[$rCategory['type']] += 1;
-                $db->query("INSERT INTO `watch_categories` (`type`, `genre_id`, `genre`, `category_id`, `bouquets`) VALUES (?, ?, ?, 0, '[]');", array('movie' => 3, 'show' => 4)[$rCategory['type']], $rCatID[$rCategory['type']], $rCategory['title']);
+        $rTypes = array('movie' => 3, 'show' => 4);
+        $rKnown = $rNextID = array();
+        foreach ($rTypes as $rName => $rType) {
+            $rKnown[$rName] = self::getPlexCategories($rType);
+            $db->query('SELECT MAX(`genre_id`) AS `max` FROM `watch_categories` WHERE `type` = ?;', $rType);
+            $rNextID[$rName] = intval($db->get_row()['max']);
+        }
+
+        foreach (glob(WATCH_TMP_PATH . '*.pcat') as $rFile) {
+            $rCategory = json_decode(file_get_contents($rFile), true);
+            if (!isset($rKnown[$rCategory['type']][$rCategory['title']])) {
+                $rNextID[$rCategory['type']]++;
+                $db->query("INSERT INTO `watch_categories` (`type`, `genre_id`, `genre`, `category_id`, `bouquets`) VALUES (?, ?, ?, 0, '[]');", $rTypes[$rCategory['type']], $rNextID[$rCategory['type']], $rCategory['title']);
             }
-            unlink($a539efc67de58f76);
+            unlink($rFile);
         }
     }
 
     /**
-     * Обработать файлы букетов во временной директории.
+     * Add to bouquets the streams/series workers wrote to *.pbouquet.
      */
     public static function checkBouquets() {
-        $db = self::db();
-        $a39a336ad3894348 = array();
-        $rBouquets = glob(WATCH_TMP_PATH . '*.pbouquet');
-        foreach ($rBouquets as $D3e2134ebfab5c71) {
-            $rBouquet = json_decode(file_get_contents($D3e2134ebfab5c71), true);
-            if (isset($a39a336ad3894348[$rBouquet['bouquet_id']])) {
-            } else {
-                $a39a336ad3894348[$rBouquet['bouquet_id']] = array('movie' => array(), 'series' => array());
-            }
-            $a39a336ad3894348[$rBouquet['bouquet_id']][$rBouquet['type']][] = $rBouquet['id'];
-            unlink($D3e2134ebfab5c71);
+        $rAdditions = array();
+        foreach (glob(WATCH_TMP_PATH . '*.pbouquet') as $rFile) {
+            $rBouquet = json_decode(file_get_contents($rFile), true);
+            $rAdditions[$rBouquet['bouquet_id']][$rBouquet['type']][] = $rBouquet['id'];
+            unlink($rFile);
         }
-        foreach ($a39a336ad3894348 as $rBouquetID => $rBouquetData) {
-            $rBouquet = self::getBouquet($rBouquetID);
-            if ($rBouquet) {
-                foreach (array_keys($rBouquetData) as $rType) {
-                    if ($rType == 'movie') {
-                        $rColumn = 'bouquet_movies';
-                    } else {
-                        $rColumn = 'bouquet_series';
+
+        $db = self::db();
+        foreach ($rAdditions as $rBouquetID => $rByType) {
+            $db->query('SELECT * FROM `bouquets` WHERE `id` = ?;', $rBouquetID);
+            if ($db->num_rows() != 1) {
+                continue;
+            }
+            $rBouquet = $db->get_row();
+            foreach ($rByType as $rType => $rIDs) {
+                $rColumn = ($rType == 'movie' ? 'bouquet_movies' : 'bouquet_series');
+                $rItems = json_decode($rBouquet[$rColumn], true) ?: array();
+                foreach ($rIDs as $rID) {
+                    if (0 < intval($rID) && !in_array($rID, $rItems)) {
+                        $rItems[] = $rID;
                     }
-                    $rChannels = json_decode($rBouquet[$rColumn], true);
-                    foreach ($rBouquetData[$rType] as $rID) {
-                        if (0 >= intval($rID) || in_array($rID, $rChannels)) {
-                        } else {
-                            $rChannels[] = $rID;
-                        }
-                    }
-                    $db->query('UPDATE `bouquets` SET `' . $rColumn . '` = ? WHERE `id` = ?;', '[' . implode(',', array_map('intval', $rChannels)) . ']', $rBouquetID);
                 }
+                $db->query('UPDATE `bouquets` SET `' . $rColumn . '` = ? WHERE `id` = ?;', '[' . implode(',', array_map('intval', $rItems)) . ']', $rBouquetID);
             }
         }
     }
 
     /**
-     * Основная точка входа крона Plex.
-     * Заменяет loadCron().
+     * Plex cron entry point.
+     *
+     * @param int|null $rForce Folder ID to scan regardless of schedule.
      */
     public static function run($rForce = null) {
-        $db = self::db();
         global $rScanOffset;
 
         // Some environments keep scan offset undefined/null; normalize to int.
         $rScanOffset = (is_numeric($rScanOffset) ? intval($rScanOffset) : 0);
-
-        echo '[PlexCron] Start: server_id=' . SERVER_ID . ', force=' . intval($rForce ?: 0) . ', scan_offset=' . intval($rScanOffset) . "\n";
+        echo '[PlexCron] Start: server_id=' . SERVER_ID . ', force=' . intval($rForce ?: 0) . ', scan_offset=' . $rScanOffset . "\n";
 
         $rPlexCategories = array(3 => self::getPlexCategories(3), 4 => self::getPlexCategories(4));
         echo '[PlexCron] Categories loaded: movie=' . count($rPlexCategories[3]) . ', show=' . count($rPlexCategories[4]) . "\n";
 
         self::checkBouquets();
         self::checkCategories();
-        echo '[PlexCron] Temp sync files processed (.pbouquet/.pcat).' . "\n";
+        echo "[PlexCron] Temp sync files processed (.pbouquet/.pcat).\n";
 
-        if (!$rForce) {
-            $db->query("SELECT * FROM `watch_folders` WHERE `type` = 'plex' AND `server_id` = ? AND `active` = 1 AND (`last_run` IS NULL OR `last_run` = 0 OR UNIX_TIMESTAMP() - `last_run` > ?) ORDER BY `id` ASC;", SERVER_ID, $rScanOffset);
-        } else {
-            $db->query("SELECT * FROM `watch_folders` WHERE `type` = 'plex' AND `server_id` = ? AND `id` = ?;", SERVER_ID, $rForce);
-        }
-
-        $rRows = $db->get_rows();
-        echo '[PlexCron] Folders selected for scan: ' . count($rRows) . "\n";
-
-        if (count($rRows) == 0) {
-            echo '[PlexCron] Nothing to process. Exiting.' . "\n";
-
-            $db->query("SELECT `id`, `server_id`, `active`, `last_run`, (UNIX_TIMESTAMP() - `last_run`) AS `age`, `directory`, `plex_ip`, `plex_port` FROM `watch_folders` WHERE `type` = 'plex' ORDER BY `id` ASC;");
-            if ($db->num_rows() == 0) {
-                echo '[PlexCron] Diagnostics: no records found in watch_folders with type=plex.' . "\n";
-            } else {
-                echo '[PlexCron] Diagnostics: evaluating plex folders against current filters...' . "\n";
-                foreach ($db->get_rows() as $rDiag) {
-                    $rReasons = array();
-                    $rLastRun = (is_null($rDiag['last_run']) ? null : intval($rDiag['last_run']));
-
-                    if (intval($rDiag['server_id']) != intval(SERVER_ID)) {
-                        $rReasons[] = 'server_mismatch';
-                    }
-
-                    if (intval($rDiag['active']) != 1) {
-                        $rReasons[] = 'inactive';
-                    }
-
-                    if (!$rForce && $rLastRun !== null && $rLastRun > 0) {
-                        if (intval($rDiag['age']) <= $rScanOffset) {
-                            $rReasons[] = 'waiting_scan_offset';
-                        }
-                    }
-
-                    if (count($rReasons) == 0) {
-                        $rReasons[] = 'eligible';
-                    }
-
-                    echo '[PlexCron]   id=' . intval($rDiag['id']) .
-                        ' server_id=' . intval($rDiag['server_id']) .
-                        ' active=' . intval($rDiag['active']) .
-                        ' last_run=' . (is_null($rDiag['last_run']) ? 'NULL' : $rDiag['last_run']) .
-                        ' age=' . ($rDiag['age'] === null ? 'NULL' : intval($rDiag['age'])) .
-                        ' dir=' . $rDiag['directory'] .
-                        ' host=' . $rDiag['plex_ip'] . ':' . $rDiag['plex_port'] .
-                        ' reason=' . implode(',', $rReasons) . "\n";
-                }
-            }
-
+        $rFolders = self::selectFolders($rForce, $rScanOffset);
+        echo '[PlexCron] Folders selected for scan: ' . count($rFolders) . "\n";
+        if (!$rFolders) {
+            echo "[PlexCron] Nothing to process. Exiting.\n";
+            self::printDiagnostics($rForce, $rScanOffset);
             return;
         }
 
-        if (count($rRows) > 0) {
-            shell_exec('rm -f ' . WATCH_TMP_PATH . '*.ppid');
-            $rLeafCount = $rUUIDs = $rSeriesTMDB = $rStreamDatabase = array();
-            $rTMDBDatabase = array('movie' => array(), 'series' => array());
-            $rPlexDatabase = array('movie' => array(), 'series' => array());
-            echo '[PlexCron] Generating cache...' . "\n";
-            $db->query('SELECT `id`, `tmdb_id`, `plex_uuid` FROM `streams_series` WHERE `tmdb_id` IS NOT NULL AND `tmdb_id` > 0;');
-            foreach ($db->get_rows() as $rRow) {
-                $rSeriesTMDB[$rRow['id']] = $rRow['tmdb_id'];
-                if (!empty($rRow['plex_uuid'])) {
-                    $rUUIDs[] = $rRow['plex_uuid'];
-                }
-            }
-            echo '[PlexCron] Series map prepared: tmdb_series=' . count($rSeriesTMDB) . ', known_plex_uuid=' . count($rUUIDs) . "\n";
+        shell_exec('rm -f ' . WATCH_TMP_PATH . '*.ppid');
+        $rKnown = self::buildCache();
+        foreach ($rFolders as $rFolder) {
+            self::syncFolder($rFolder, $rKnown, $rPlexCategories, $rForce);
+        }
+        echo "[PlexCron] Run finished.\n";
+    }
 
-            $db->query('SELECT `streams`.`id`, `streams_series`.`plex_uuid`, `streams_episodes`.`series_id`, `streams_episodes`.`season_num`, `streams_episodes`.`episode_num`, `streams`.`stream_source` FROM `streams_episodes` LEFT JOIN `streams` ON `streams`.`id` = `streams_episodes`.`stream_id` LEFT JOIN `streams_servers` ON `streams_servers`.`stream_id` = `streams`.`id` LEFT JOIN `streams_series` ON `streams_series`.`id` = `streams_episodes`.`series_id` WHERE `streams_servers`.`server_id` = ?;', SERVER_ID);
-            foreach ($db->get_rows() as $rRow) {
-                $rStreamDatabase[] = $rRow['stream_source'];
-                $rTMDBID = ($rSeriesTMDB[$rRow['series_id']] ?: null);
-                list($rSource) = json_decode($rRow['stream_source'], true);
-                if ($rTMDBID) {
-                    $rTMDBDatabase['series'][$rTMDBID][$rRow['season_num'] . '_' . $rRow['episode_num']] = array('id' => $rRow['id'], 'source' => $rSource);
-                }
-                if (!empty($rRow['plex_uuid'])) {
-                    $rPlexDatabase['series'][$rRow['plex_uuid']][$rRow['season_num'] . '_' . $rRow['episode_num']] = array('id' => $rRow['id'], 'source' => $rSource);
-                    $rLeafCount[$rRow['plex_uuid']]++;
-                }
-            }
+    /**
+     * This server's Plex folders that are due for a scan (or the forced one).
+     */
+    private static function selectFolders($rForce, $rScanOffset) {
+        $db = self::db();
+        if ($rForce) {
+            $db->query("SELECT * FROM `watch_folders` WHERE `type` = 'plex' AND `server_id` = ? AND `id` = ?;", SERVER_ID, $rForce);
+        } else {
+            $db->query("SELECT * FROM `watch_folders` WHERE `type` = 'plex' AND `server_id` = ? AND `active` = 1 AND (`last_run` IS NULL OR `last_run` = 0 OR UNIX_TIMESTAMP() - `last_run` > ?) ORDER BY `id` ASC;", SERVER_ID, $rScanOffset);
+        }
+        return $db->get_rows();
+    }
 
-            $db->query('SELECT `streams`.`id`, `streams`.`plex_uuid`, `streams`.`stream_source`, `streams`.`movie_properties` FROM `streams` LEFT JOIN `streams_servers` ON `streams_servers`.`stream_id` = `streams`.`id` WHERE `streams`.`type` = 2 AND `streams_servers`.`server_id` = ?;', SERVER_ID);
-            foreach ($db->get_rows() as $rRow) {
-                $rStreamDatabase[] = $rRow['stream_source'];
-                $rTMDBID = (json_decode($rRow['movie_properties'], true)['tmdb_id'] ?: null);
-                list($rSource) = json_decode($rRow['stream_source'], true);
-                if ($rTMDBID) {
-                    $rTMDBDatabase['movie'][$rTMDBID] = array('id' => $rRow['id'], 'source' => $rSource);
-                }
-                if (!empty($rRow['plex_uuid'])) {
-                    $rPlexDatabase['movie'][$rRow['plex_uuid']] = array('id' => $rRow['id'], 'source' => $rSource);
-                    $rUUIDs[] = $rRow['plex_uuid'];
-                }
-            }
-
-            echo '[PlexCron] Existing sources indexed: total_sources=' . count($rStreamDatabase) . ', plex_movie=' . count($rPlexDatabase['movie']) . ', plex_series=' . count($rPlexDatabase['series']) . "\n";
-
-            exec('find ' . WATCH_TMP_PATH . ' -maxdepth 1 -name "*.pcache" -print0 | xargs -0 rm');
-            file_put_contents(WATCH_TMP_PATH . 'stream_database.pcache', json_encode($rStreamDatabase));
-            foreach ($rTMDBDatabase['series'] as $rTMDBID => $rData) {
-                file_put_contents(WATCH_TMP_PATH . 'series_' . $rTMDBID . '.pcache', json_encode($rData));
-            }
-            foreach ($rTMDBDatabase['movie'] as $rTMDBID => $rData) {
-                file_put_contents(WATCH_TMP_PATH . 'movie_' . $rTMDBID . '.pcache', json_encode($rData));
-            }
-            foreach ($rPlexDatabase['series'] as $rPlexID => $rData) {
-                file_put_contents(WATCH_TMP_PATH . 'series_' . $rPlexID . '.pcache', json_encode($rData));
-            }
-            foreach ($rPlexDatabase['movie'] as $rPlexID => $rData) {
-                file_put_contents(WATCH_TMP_PATH . 'movie_' . $rPlexID . '.pcache', json_encode($rData));
-            }
-            unset($rTMDBDatabase, $rPlexDatabase);
-            echo '[PlexCron] Finished generating cache!' . "\n";
+    /**
+     * Why no folder was selected — one line per Plex folder.
+     */
+    private static function printDiagnostics($rForce, $rScanOffset) {
+        $db = self::db();
+        $db->query("SELECT `id`, `server_id`, `active`, `last_run`, (UNIX_TIMESTAMP() - `last_run`) AS `age`, `directory`, `plex_ip`, `plex_port` FROM `watch_folders` WHERE `type` = 'plex' ORDER BY `id` ASC;");
+        if ($db->num_rows() == 0) {
+            echo "[PlexCron] Diagnostics: no records found in watch_folders with type=plex.\n";
+            return;
         }
 
-        foreach ($rRows as $rRow) {
-            $rLimit = 100;
-            $rThreadData = array();
-
-            echo '[PlexCron] Processing folder_id=' . intval($rRow['id']) . ' host=' . $rRow['plex_ip'] . ':' . $rRow['plex_port'] . ' directory=' . $rRow['directory'] . "\n";
-
-            // Get a Plex token (with caching)
-            $rToken = PlexAuth::getPlexToken($rRow['plex_ip'], $rRow['plex_port'], $rRow['plex_username'], $rRow['plex_password']);
-            if (!$rToken) {
-                echo '[PlexCron] Failed to obtain Plex token for folder_id=' . intval($rRow['id']) . ".\n";
-            } else {
-                echo '[PlexCron] Token obtained for folder_id=' . intval($rRow['id']) . ".\n";
+        echo "[PlexCron] Diagnostics: evaluating plex folders against current filters...\n";
+        foreach ($db->get_rows() as $rRow) {
+            $rReasons = array();
+            if (intval($rRow['server_id']) != intval(SERVER_ID)) {
+                $rReasons[] = 'server_mismatch';
+            }
+            if (intval($rRow['active']) != 1) {
+                $rReasons[] = 'inactive';
+            }
+            if (!$rForce && 0 < intval($rRow['last_run']) && intval($rRow['age']) <= $rScanOffset) {
+                $rReasons[] = 'waiting_scan_offset';
             }
 
-            $db->query('UPDATE `watch_folders` SET `last_run` = UNIX_TIMESTAMP() WHERE `id` = ?;', $rRow['id']);
-            echo '[PlexCron] Updated last_run for folder_id=' . intval($rRow['id']) . ".\n";
+            echo '[PlexCron]   id=' . intval($rRow['id'])
+                . ' server_id=' . intval($rRow['server_id'])
+                . ' active=' . intval($rRow['active'])
+                . ' last_run=' . ($rRow['last_run'] ?? 'NULL')
+                . ' age=' . ($rRow['age'] === null ? 'NULL' : intval($rRow['age']))
+                . ' dir=' . $rRow['directory']
+                . ' host=' . $rRow['plex_ip'] . ':' . $rRow['plex_port']
+                . ' reason=' . implode(',', ($rReasons ?: array('eligible'))) . "\n";
+        }
+    }
 
-            $rSectionURL = 'http://' . $rRow['plex_ip'] . ':' . $rRow['plex_port'] . '/library/sections?X-Plex-Token=' . $rToken;
-            $rSections = json_decode(json_encode(simplexml_load_string(self::readURL($rSectionURL))), true);
-            if (!isset($rSections['Directory'])) {
-                echo '[PlexCron] No sections returned for folder_id=' . intval($rRow['id']) . '. Skipping folder.' . "\n";
-                continue;
+    /**
+     * Cache of what is already imported, for the workers (*.pcache in WATCH_TMP_PATH):
+     * every stream_source, plus stream ID and source by Plex UUID and by TMDB ID.
+     *
+     * @return array ['uuids' => known Plex UUIDs, 'leaf_counts' => episodes per series UUID]
+     */
+    private static function buildCache() {
+        echo "[PlexCron] Generating cache...\n";
+        $db = self::db();
+        $rKnown = array('uuids' => array(), 'leaf_counts' => array());
+        $rSources = $rCache = $rSeriesTMDB = array();
+
+        $db->query('SELECT `id`, `tmdb_id`, `plex_uuid` FROM `streams_series` WHERE `tmdb_id` IS NOT NULL AND `tmdb_id` > 0;');
+        foreach ($db->get_rows() as $rRow) {
+            $rSeriesTMDB[$rRow['id']] = $rRow['tmdb_id'];
+            if (!empty($rRow['plex_uuid'])) {
+                $rKnown['uuids'][] = $rRow['plex_uuid'];
             }
-
-            $rThreadCount = 1;
-            $rSectionMatched = false;
-            foreach (self::makeArray($rSections['Directory']) as $F24f1be2729b363d) {
-                if ($F24f1be2729b363d['@attributes']['type'] == 'movie') {
-                    $rThreadCount = (intval(SettingsManager::getAll()['thread_count_movie']) ?: 25);
-                } else {
-                    $rThreadCount = (intval(SettingsManager::getAll()['thread_count_show']) ?: 5);
-                }
-                $rKey = $F24f1be2729b363d['@attributes']['key'];
-                if ($rKey == $rRow['directory']) {
-                    $rSectionMatched = true;
-                    echo '[PlexCron] Matched section key=' . $rKey . ' type=' . $F24f1be2729b363d['@attributes']['type'] . ' threads=' . $rThreadCount . "\n";
-
-                    $B9690335cedc4164 = 'http://' . $rRow['plex_ip'] . ':' . $rRow['plex_port'] . '/library/sections/' . $rKey . '/all?X-Plex-Token=' . $rToken . '&X-Plex-Container-Start=0&X-Plex-Container-Size=1';
-                    $rCount = (intval(json_decode(json_encode(simplexml_load_string(self::readURL($B9690335cedc4164))), true)['@attributes']['totalSize']) ?: 0);
-                    echo '[PlexCron] Section item count: ' . $rCount . "\n";
-                    if ($rCount > 0) {
-                        $rSteps = [];
-                        for ($i = 0; $i <= $rCount; $i += $rLimit) {
-                            $rSteps[] = $i;
-                        }
-
-                        if (!$rSteps) {
-                            $rSteps = [0];
-                        }
-                        foreach ($rSteps as $rStart) {
-                            $d7bd8e11c885f937 = 'http://' . $rRow['plex_ip'] . ':' . $rRow['plex_port'] . '/library/sections/' . $rKey . '/all?X-Plex-Token=' . $rToken . '&X-Plex-Container-Start=' . $rStart . '&X-Plex-Container-Size=' . $rLimit . '&sort=updatedAt%3Adesc';
-                            $rContent = json_decode(json_encode(simplexml_load_string(self::readURL($d7bd8e11c885f937))), true);
-                            if (!isset($rContent['Video'])) {
-                                $rContent['Video'] = $rContent['Directory'];
-                            }
-                            foreach (self::makeArray($rContent['Video']) as $rItem) {
-                                // Keyed by UUID: paging by updatedAt shifts when Plex updates an item mid-scan, and the
-                                // item on a page boundary comes back twice — two parallel workers would import it twice.
-                                $rUUID = $rKey . '_' . $rItem['@attributes']['ratingKey'];
-                                $rUpdatedAt = intval($rItem['@attributes']['updatedAt'] ?? 0);
-                                $lastRun = intval($rRow['last_run'] ?? 0);
-                                $rIsNewOrUpdated = !$lastRun || $rUpdatedAt === 0 || $lastRun < $rUpdatedAt;
-
-                                if ($F24f1be2729b363d['@attributes']['type'] == 'movie') {
-                                    // Movies
-                                    $rIsMissing = $rRow['scan_missing'] && !in_array($rUUID, $rUUIDs, true);
-                                    if ($rIsNewOrUpdated || $rIsMissing || $rForce) {
-                                        $rThreadData[$rUUID] = [
-                                            'folder_id' => $rRow['id'],
-                                            'type' => 'movie',
-                                            'key' => $rItem['@attributes']['ratingKey'],
-                                            'uuid' => $rUUID,
-                                            'plex_categories' => $rPlexCategories,
-                                            'read_native' => $rRow['read_native'],
-                                            'movie_symlink' => $rRow['movie_symlink'],
-                                            'remove_subtitles' => $rRow['remove_subtitles'],
-                                            'auto_encode' => $rRow['auto_encode'],
-                                            'auto_upgrade' => $rRow['auto_upgrade'],
-                                            'transcode_profile_id' => $rRow['transcode_profile_id'],
-                                            'max_genres' => intval(SettingsManager::getAll()['max_genres'] ?? 5),
-                                            'plex' => true,
-                                            'ip' => $rRow['plex_ip'],
-                                            'port' => $rRow['plex_port'],
-                                            'token' => $rToken,
-                                            'fb_bouquets' => $rRow['fb_bouquets'],
-                                            'store_categories' => $rRow['store_categories'],
-                                            'category_id' => $rRow['category_id'],
-                                            'bouquets' => $rRow['bouquets'],
-                                            'fb_category_id' => $rRow['fb_category_id'],
-                                            'check_tmdb' => $rRow['check_tmdb'],
-                                            'target_container' => $rRow['target_container'],
-                                            'server_add' => $rRow['server_add'],
-                                            'direct_proxy' => $rRow['direct_proxy']
-                                        ];
-                                    }
-                                } else {
-                                    // TV series
-                                    $rCurrentLeafCount = intval($rItem['@attributes']['leafCount'] ?? 0);
-                                    $rPreviousLeafCount = $rLeafCount[$rUUID] ?? 0;
-                                    $rLeafCountChanged = $rCurrentLeafCount != $rPreviousLeafCount;
-                                    $rIsMissing = $rRow['scan_missing'] && empty($rLeafCount[$rUUID]);
-
-                                    if ($rIsNewOrUpdated || $rLeafCountChanged || $rIsMissing || $rForce) {
-                                        $rThreadData[$rUUID] = [
-                                            'folder_id' => $rRow['id'],
-                                            'type' => $F24f1be2729b363d['@attributes']['type'],
-                                            'key' => $rItem['@attributes']['ratingKey'],
-                                            'uuid' => $rUUID,
-                                            'plex_categories' => $rPlexCategories,
-                                            'read_native' => $rRow['read_native'],
-                                            'movie_symlink' => $rRow['movie_symlink'],
-                                            'remove_subtitles' => $rRow['remove_subtitles'],
-                                            'auto_encode' => $rRow['auto_encode'],
-                                            'auto_upgrade' => $rRow['auto_upgrade'],
-                                            'transcode_profile_id' => $rRow['transcode_profile_id'],
-                                            'max_genres' => intval(SettingsManager::getAll()['max_genres'] ?? 5),
-                                            'plex' => true,
-                                            'ip' => $rRow['plex_ip'],
-                                            'port' => $rRow['plex_port'],
-                                            'token' => $rToken,
-                                            'fb_bouquets' => $rRow['fb_bouquets'],
-                                            'store_categories' => $rRow['store_categories'],
-                                            'category_id' => $rRow['category_id'],
-                                            'bouquets' => $rRow['bouquets'],
-                                            'fb_category_id' => $rRow['fb_category_id'],
-                                            'check_tmdb' => $rRow['check_tmdb'],
-                                            'target_container' => $rRow['target_container'],
-                                            'server_add' => $rRow['server_add'],
-                                            'direct_proxy' => $rRow['direct_proxy']
-                                        ];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-
-            if (!$rSectionMatched) {
-                echo '[PlexCron] Target section key ' . $rRow['directory'] . ' not found for folder_id=' . intval($rRow['id']) . ".\n";
-            }
-
-            if (count($rThreadData) > 0) {
-                echo '[PlexCron] Scan complete. Items queued: ' . count($rThreadData) . ".\n";
-            } else {
-                echo '[PlexCron] No new/updated items found for folder_id=' . intval($rRow['id']) . ".\n";
-            }
-
-            $cacheDataKey = array();
-            foreach ($rThreadData as $rData) {
-                if ($rData['type'] == 'movie') {
-                    $rCommand = '/usr/bin/timeout 60 ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
-                } else {
-                    $rCommand = '/usr/bin/timeout 300 ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
-                }
-                $cacheDataKey[] = $rCommand;
-            }
-            unset($rThreadData);
-            $db->close_mysql();
-            echo '[PlexCron] Starting worker execution. Commands=' . count($cacheDataKey) . ', mode=' . ($rThreadCount <= 1 ? 'single' : 'multi') . ', threads=' . $rThreadCount . "\n";
-
-            if ($rThreadCount <= 1) {
-                foreach ($cacheDataKey as $rCommand) {
-                    shell_exec($rCommand);
-                }
-            } else {
-                $cacheMetadataKey = new Multithread($cacheDataKey, $rThreadCount);
-                $cacheMetadataKey->run();
-            }
-
-            $db->db_connect();
-            self::checkBouquets();
-            self::checkCategories();
-            echo '[PlexCron] Post-processing finished for folder_id=' . intval($rRow['id']) . ".\n";
         }
 
-        echo '[PlexCron] Run finished.' . "\n";
+        $db->query('SELECT `streams`.`id`, `streams_series`.`plex_uuid`, `streams_episodes`.`series_id`, `streams_episodes`.`season_num`, `streams_episodes`.`episode_num`, `streams`.`stream_source` FROM `streams_episodes` LEFT JOIN `streams` ON `streams`.`id` = `streams_episodes`.`stream_id` LEFT JOIN `streams_servers` ON `streams_servers`.`stream_id` = `streams`.`id` LEFT JOIN `streams_series` ON `streams_series`.`id` = `streams_episodes`.`series_id` WHERE `streams_servers`.`server_id` = ?;', SERVER_ID);
+        foreach ($db->get_rows() as $rRow) {
+            $rSources[] = $rRow['stream_source'];
+            $rEntry = self::cacheEntry($rRow);
+            $rEpisode = $rRow['season_num'] . '_' . $rRow['episode_num'];
+            if (!empty($rSeriesTMDB[$rRow['series_id']])) {
+                $rCache['series_' . $rSeriesTMDB[$rRow['series_id']]][$rEpisode] = $rEntry;
+            }
+            if (!empty($rRow['plex_uuid'])) {
+                $rCache['series_' . $rRow['plex_uuid']][$rEpisode] = $rEntry;
+                $rKnown['leaf_counts'][$rRow['plex_uuid']] = ($rKnown['leaf_counts'][$rRow['plex_uuid']] ?? 0) + 1;
+            }
+        }
+
+        $db->query('SELECT `streams`.`id`, `streams`.`plex_uuid`, `streams`.`stream_source`, `streams`.`movie_properties` FROM `streams` LEFT JOIN `streams_servers` ON `streams_servers`.`stream_id` = `streams`.`id` WHERE `streams`.`type` = 2 AND `streams_servers`.`server_id` = ?;', SERVER_ID);
+        foreach ($db->get_rows() as $rRow) {
+            $rSources[] = $rRow['stream_source'];
+            $rEntry = self::cacheEntry($rRow);
+            $rTMDBID = json_decode($rRow['movie_properties'], true)['tmdb_id'] ?? null;
+            if ($rTMDBID) {
+                $rCache['movie_' . $rTMDBID] = $rEntry;
+            }
+            if (!empty($rRow['plex_uuid'])) {
+                $rCache['movie_' . $rRow['plex_uuid']] = $rEntry;
+                $rKnown['uuids'][] = $rRow['plex_uuid'];
+            }
+        }
+        echo '[PlexCron] Existing sources indexed: total_sources=' . count($rSources) . ', cache_files=' . count($rCache) . "\n";
+
+        exec('find ' . WATCH_TMP_PATH . ' -maxdepth 1 -name "*.pcache" -print0 | xargs -0 rm');
+        file_put_contents(WATCH_TMP_PATH . 'stream_database.pcache', json_encode($rSources));
+        foreach ($rCache as $rName => $rData) {
+            file_put_contents(WATCH_TMP_PATH . $rName . '.pcache', json_encode($rData));
+        }
+        echo "[PlexCron] Finished generating cache!\n";
+        return $rKnown;
+    }
+
+    /**
+     * @return array ['id', 'source' => first stream_source entry]
+     */
+    private static function cacheEntry(array $rRow) {
+        return array('id' => $rRow['id'], 'source' => json_decode($rRow['stream_source'], true)[0] ?? null);
+    }
+
+    /**
+     * Scan one folder and run its items through the workers.
+     */
+    private static function syncFolder(array $rFolder, array $rKnown, array $rPlexCategories, $rForce) {
+        $rID = intval($rFolder['id']);
+        echo '[PlexCron] Processing folder_id=' . $rID . ' host=' . $rFolder['plex_ip'] . ':' . $rFolder['plex_port'] . ' directory=' . $rFolder['directory'] . "\n";
+
+        $rToken = PlexAuth::getPlexToken($rFolder['plex_ip'], $rFolder['plex_port'], $rFolder['plex_username'], $rFolder['plex_password']);
+        echo '[PlexCron] ' . ($rToken ? 'Token obtained' : 'Failed to obtain Plex token') . " for folder_id=$rID.\n";
+
+        self::db()->query('UPDATE `watch_folders` SET `last_run` = UNIX_TIMESTAMP() WHERE `id` = ?;', $rID);
+        echo "[PlexCron] Updated last_run for folder_id=$rID.\n";
+
+        $rScan = self::scanFolder($rFolder, $rToken, $rKnown, $rPlexCategories, $rForce);
+        if ($rScan === null) {
+            echo "[PlexCron] No sections returned for folder_id=$rID. Skipping folder.\n";
+            return;
+        }
+        echo '[PlexCron] ' . ($rScan['items'] ? 'Scan complete. Items queued: ' . count($rScan['items']) : "No new/updated items found for folder_id=$rID") . ".\n";
+
+        self::runWorkers($rScan['items'], $rScan['threads']);
+        self::checkBouquets();
+        self::checkCategories();
+        echo "[PlexCron] Post-processing finished for folder_id=$rID.\n";
+    }
+
+    /**
+     * Find the folder's section on the Plex server and collect worker jobs.
+     *
+     * @return array|null ['threads' => int, 'items' => jobs by UUID]; null when the server returned no sections.
+     */
+    public static function scanFolder(array $rFolder, $rToken, array $rKnown, array $rPlexCategories, $rForce = null) {
+        $rSections = PlexClient::get(PlexClient::url($rFolder['plex_ip'], $rFolder['plex_port'], $rToken, '/library/sections'));
+        if (!isset($rSections['Directory'])) {
+            return null;
+        }
+
+        foreach (PlexClient::makeArray($rSections['Directory']) as $rSection) {
+            if ($rSection['@attributes']['key'] == $rFolder['directory']) {
+                $rType = $rSection['@attributes']['type'];
+                $rThreads = self::threadCount($rType);
+                echo '[PlexCron] Matched section key=' . $rFolder['directory'] . ' type=' . $rType . ' threads=' . $rThreads . "\n";
+                return array('threads' => $rThreads, 'items' => self::scanSection($rFolder, $rToken, $rType, $rKnown, $rPlexCategories, $rForce));
+            }
+        }
+
+        echo '[PlexCron] Target section key ' . $rFolder['directory'] . ' not found for folder_id=' . intval($rFolder['id']) . ".\n";
+        return array('threads' => 1, 'items' => array());
+    }
+
+    private static function threadCount($rType) {
+        $rSettings = SettingsManager::getAll();
+        if ($rType == 'movie') {
+            return (intval($rSettings['thread_count_movie'] ?? 0) ?: 25);
+        }
+        return (intval($rSettings['thread_count_show'] ?? 0) ?: 5);
+    }
+
+    /**
+     * Page through the section (most recently updated first) and pick items to import.
+     *
+     * @return array Worker jobs by UUID.
+     */
+    private static function scanSection(array $rFolder, $rToken, $rType, array $rKnown, array $rPlexCategories, $rForce) {
+        $rPath = '/library/sections/' . $rFolder['directory'] . '/all';
+        $rTotal = PlexClient::get(PlexClient::url($rFolder['plex_ip'], $rFolder['plex_port'], $rToken, $rPath, 'X-Plex-Container-Start=0&X-Plex-Container-Size=1'));
+        $rCount = intval($rTotal['@attributes']['totalSize'] ?? 0);
+        echo '[PlexCron] Section item count: ' . $rCount . "\n";
+
+        $rItems = array();
+        for ($rStart = 0; $rStart < $rCount; $rStart += self::PAGE_SIZE) {
+            $rPage = PlexClient::get(PlexClient::url($rFolder['plex_ip'], $rFolder['plex_port'], $rToken, $rPath, 'X-Plex-Container-Start=' . $rStart . '&X-Plex-Container-Size=' . self::PAGE_SIZE . '&sort=updatedAt%3Adesc'));
+            foreach (PlexClient::makeArray($rPage['Video'] ?? $rPage['Directory'] ?? null) as $rItem) {
+                $rRatingKey = $rItem['@attributes']['ratingKey'];
+                $rUUID = $rFolder['directory'] . '_' . $rRatingKey;
+                if (self::needsImport($rFolder, $rType, $rItem['@attributes'], $rUUID, $rKnown, $rForce)) {
+                    // Keyed by UUID: paging by updatedAt shifts when Plex updates an item mid-scan, and the
+                    // item on a page boundary comes back twice — two parallel workers would import it twice.
+                    $rItems[$rUUID] = self::threadData($rFolder, $rType, $rRatingKey, $rUUID, $rToken, $rPlexCategories);
+                }
+            }
+        }
+        return $rItems;
+    }
+
+    /**
+     * New or changed since the last scan; with scan_missing, also anything not imported yet.
+     * A series whose episode count changed is rescanned too.
+     */
+    private static function needsImport(array $rFolder, $rType, array $rInfo, $rUUID, array $rKnown, $rForce) {
+        $rUpdatedAt = intval($rInfo['updatedAt'] ?? 0);
+        $rLastRun = intval($rFolder['last_run'] ?? 0);
+        if ($rForce || !$rLastRun || $rUpdatedAt === 0 || $rLastRun < $rUpdatedAt) {
+            return true;
+        }
+        if ($rType == 'movie') {
+            return $rFolder['scan_missing'] && !in_array($rUUID, $rKnown['uuids'], true);
+        }
+        $rLeafCount = $rKnown['leaf_counts'][$rUUID] ?? 0;
+        return intval($rInfo['leafCount'] ?? 0) != $rLeafCount || ($rFolder['scan_missing'] && !$rLeafCount);
+    }
+
+    /**
+     * A `plex_item` worker job (see PlexItem::run()).
+     */
+    private static function threadData(array $rFolder, $rType, $rRatingKey, $rUUID, $rToken, array $rPlexCategories) {
+        $rData = array(
+            'folder_id' => $rFolder['id'],
+            'type' => $rType,
+            'key' => $rRatingKey,
+            'uuid' => $rUUID,
+            'plex_categories' => $rPlexCategories,
+            'max_genres' => intval(SettingsManager::getAll()['max_genres'] ?? 5),
+            'plex' => true,
+            'ip' => $rFolder['plex_ip'],
+            'port' => $rFolder['plex_port'],
+            'token' => $rToken,
+        );
+        foreach (self::FOLDER_SETTINGS as $rKey) {
+            $rData[$rKey] = $rFolder[$rKey];
+        }
+        return $rData;
+    }
+
+    /**
+     * Run a `plex_item` worker per job, $rThreadCount at a time.
+     */
+    private static function runWorkers(array $rItems, $rThreadCount) {
+        $rCommands = array();
+        foreach ($rItems as $rData) {
+            $rCommands[] = '/usr/bin/timeout ' . ($rData['type'] == 'movie' ? 60 : 300) . ' ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
+        }
+
+        $db = self::db();
+        $db->close_mysql();
+        echo '[PlexCron] Starting worker execution. Commands=' . count($rCommands) . ', mode=' . ($rThreadCount <= 1 ? 'single' : 'multi') . ', threads=' . $rThreadCount . "\n";
+        if ($rThreadCount <= 1) {
+            foreach ($rCommands as $rCommand) {
+                shell_exec($rCommand);
+            }
+        } else {
+            (new Multithread($rCommands, $rThreadCount))->run();
+        }
+        $db->db_connect();
     }
 }

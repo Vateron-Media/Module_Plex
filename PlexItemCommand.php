@@ -30,7 +30,9 @@ class PlexItemCommand implements CommandInterface {
 			return 1;
 		}
 
-		if (empty($rArgs[0])) {
+		$rPayload = base64_decode($rArgs[0] ?? '', true);
+		$rThread = ($rPayload === false ? null : json_decode($rPayload, true));
+		if (!is_array($rThread)) {
 			return 0;
 		}
 
@@ -49,34 +51,14 @@ class PlexItemCommand implements CommandInterface {
 		ini_set('display_startup_errors', 1);
 		error_reporting(30711);
 
-		global $rStreamDatabase;
-		global $rThreadData;
-
-		$rCacheContent = @file_get_contents(WATCH_TMP_PATH . 'stream_database.pcache');
-		$rStreamDatabase = (is_string($rCacheContent) ? (json_decode($rCacheContent, true) ?: array()) : array());
-
-		$rDecodedPayload = base64_decode($rArgs[0], true);
-		if ($rDecodedPayload === false) {
-			return 0;
-		}
-
-		$rThreadData = json_decode($rDecodedPayload, true);
-
-		if (!is_array($rThreadData)) {
-			return 0;
-		}
-
 		file_put_contents(WATCH_TMP_PATH . getmypid() . '.ppid', time());
 
-		if ($rThreadData['type'] == 'movie') {
-			$rTimeout = 60;
-		} else {
-			$rTimeout = 600;
-		}
-
+		$rTimeout = ($rThread['type'] == 'movie' ? 60 : 600);
 		set_time_limit($rTimeout);
 		ini_set('max_execution_time', $rTimeout);
-		PlexItem::run();
+
+		$rCache = @file_get_contents(WATCH_TMP_PATH . 'stream_database.pcache');
+		PlexItem::run($rThread, (is_string($rCache) ? (json_decode($rCache, true) ?: array()) : array()));
 
 		return 0;
 	}
