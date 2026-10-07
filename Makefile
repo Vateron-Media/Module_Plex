@@ -13,6 +13,7 @@ release: clean
 	  --exclude=./.github \
 	  --exclude=./.claude \
 	  --exclude=./graphify-out \
+	  --exclude=./tests \
 	  --exclude=./Makefile \
 	  --exclude=./README.md \
 	  --exclude=./RELEASE.md \

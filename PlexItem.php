@@ -166,6 +166,40 @@ class PlexItem {
     }
 
     /**
+     * Вставить новый поток вместе с привязками к серверам (и эпизоду) в одной транзакции.
+     * Без неё убитый по таймауту воркер оставлял поток без сервера: следующий скан
+     * его не видел (кэш строится через JOIN streams_servers) и импортировал дубль.
+     *
+     * @param string $rQuery
+     * @param array $rData
+     * @param array $rServers
+     * @param array|null $rEpisode [season_num, series_id, episode_num]
+     * @return int|false ID потока или false
+     */
+    public static function insertStream($rQuery, array $rData, array $rServers, $rEpisode = null) {
+        $db = self::db();
+        // Refused begin (already inside a transaction): the writes join the caller's, which owns commit.
+        $rOwn = $db->beginTransaction();
+        if ($db->query($rQuery, ...$rData)) {
+            $rInsertID = $db->last_insert_id();
+            $rLinked = true;
+            foreach ($rServers as $rServerID) {
+                $rLinked = $db->query('INSERT INTO `streams_servers`(`stream_id`, `server_id`, `parent_id`) VALUES(?, ?, NULL);', $rInsertID, $rServerID) && $rLinked;
+            }
+            if ($rEpisode) {
+                $rLinked = $db->query('INSERT INTO `streams_episodes`(`season_num`, `series_id`, `stream_id`, `episode_num`) VALUES(?, ?, ?, ?);', $rEpisode[0], $rEpisode[1], $rInsertID, $rEpisode[2]) && $rLinked;
+            }
+            if ($rLinked && (!$rOwn || $db->commit())) {
+                return $rInsertID;
+            }
+        }
+        if ($rOwn) {
+            $db->rollback();
+        }
+        return false;
+    }
+
+    /**
      * Записать файл букета во временную директорию.
      *
      * @param string $rType
@@ -350,6 +384,8 @@ class PlexItem {
                 $rServers[] = intval($rServerID);
             }
         }
+        // UNIQUE (stream_id, server_id): a repeated server would fail the insert and roll the import back.
+        $rServers = array_unique($rServers);
 
         $rBouquetIDs = $rCategoryIDs = array();
 
@@ -594,13 +630,13 @@ class PlexItem {
                         $rQuery = 'REPLACE INTO `streams`(' . $rPrepare['columns'] . ') VALUES(' . $rPrepare['placeholder'] . ');';
                         echo "LOG: Executing REPLACE INTO `streams` (" . ($rUpgradeData ? "upgrade" : "new") . ")\n";
 
-                        if ($db->last_insert_id() > 0) {
-                            $rInsertID = $db->last_insert_id();
+                        if ($rUpgradeData) {
+                            $rInsertID = $db->query($rQuery, ...$rPrepare['data']) ? $rImportArray['id'] : false;
+                        } else {
+                            $rInsertID = self::insertStream($rQuery, $rPrepare['data'], $rServers);
                         }
 
-                        if ($db->query($rQuery, ...$rPrepare['data'])) {
-                            $rInsertID = $db->last_insert_id() ?: $rImportArray['id'];
-
+                        if ($rInsertID) {
                             if ($rUpgradeData) {
                                 echo "LOG: \Movie successfully upgraded! Stream ID: $rInsertID\n";
                                 foreach ($rServers as $rServerID) {
@@ -614,9 +650,6 @@ class PlexItem {
                                 $db->query('INSERT INTO `watch_logs`(`type`, `server_id`, `filename`, `status`, `stream_id`) VALUES(?, ?, ?, 6, 0);', $rThreadType, SERVER_ID, htmlspecialchars($rFileArray['file'], ENT_QUOTES, 'UTF-8'));
                             } else {
                                 echo "LOG: New movie imported successfully! Stream ID: $rInsertID\n";
-                                foreach ($rServers as $rServerID) {
-                                    $db->query('INSERT INTO `streams_servers`(`stream_id`, `server_id`, `parent_id`) VALUES(?, ?, NULL);', $rInsertID, $rServerID);
-                                }
                                 foreach ($rBouquetIDs as $rBouquet) {
                                     self::addToBouquet('movie', $rBouquet, $rInsertID);
                                 }
@@ -935,13 +968,9 @@ class PlexItem {
                                 $rPrepare = self::prepareArray($rImportArray);
                                 $rQuery = 'REPLACE INTO `streams`(' . $rPrepare['columns'] . ') VALUES(' . $rPrepare['placeholder'] . ');';
 
-                                if ($db->query($rQuery, ...$rPrepare['data'])) {
-                                    $rInsertID = $db->last_insert_id();
+                                $rInsertID = self::insertStream($rQuery, $rPrepare['data'], $rServers, array($rReleaseSeason, $rSeries['id'], $rReleaseEpisode));
+                                if ($rInsertID) {
                                     echo "Episode imported successfully! Stream ID = $rInsertID\n";
-                                    foreach ($rServers as $rServerID) {
-                                        $db->query('INSERT INTO `streams_servers`(`stream_id`, `server_id`, `parent_id`) VALUES(?, ?, NULL);', $rInsertID, $rServerID);
-                                    }
-                                    $db->query('INSERT INTO `streams_episodes`(`season_num`, `series_id`, `stream_id`, `episode_num`) VALUES(?, ?, ?, ?);', $rReleaseSeason, $rSeries['id'], $rInsertID, $rReleaseEpisode);
 
                                     if ($rThreadData['auto_encode']) {
                                         foreach ($rServers as $rServerID) {

@@ -336,6 +336,8 @@ class PlexCron {
                                 $rContent['Video'] = $rContent['Directory'];
                             }
                             foreach (self::makeArray($rContent['Video']) as $rItem) {
+                                // Keyed by UUID: paging by updatedAt shifts when Plex updates an item mid-scan, and the
+                                // item on a page boundary comes back twice — two parallel workers would import it twice.
                                 $rUUID = $rKey . '_' . $rItem['@attributes']['ratingKey'];
                                 $rUpdatedAt = intval($rItem['@attributes']['updatedAt'] ?? 0);
                                 $lastRun = intval($rRow['last_run'] ?? 0);
@@ -345,7 +347,7 @@ class PlexCron {
                                     // Movies
                                     $rIsMissing = $rRow['scan_missing'] && !in_array($rUUID, $rUUIDs, true);
                                     if ($rIsNewOrUpdated || $rIsMissing || $rForce) {
-                                        $rThreadData[] = [
+                                        $rThreadData[$rUUID] = [
                                             'folder_id' => $rRow['id'],
                                             'type' => 'movie',
                                             'key' => $rItem['@attributes']['ratingKey'],
@@ -381,7 +383,7 @@ class PlexCron {
                                     $rIsMissing = $rRow['scan_missing'] && empty($rLeafCount[$rUUID]);
 
                                     if ($rIsNewOrUpdated || $rLeafCountChanged || $rIsMissing || $rForce) {
-                                        $rThreadData[] = [
+                                        $rThreadData[$rUUID] = [
                                             'folder_id' => $rRow['id'],
                                             'type' => $F24f1be2729b363d['@attributes']['type'],
                                             'key' => $rItem['@attributes']['ratingKey'],
@@ -430,7 +432,7 @@ class PlexCron {
             $cacheDataKey = array();
             foreach ($rThreadData as $rData) {
                 if ($rData['type'] == 'movie') {
-                    $rCommand = '/usr/bin/timeout 20 ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
+                    $rCommand = '/usr/bin/timeout 60 ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
                 } else {
                     $rCommand = '/usr/bin/timeout 300 ' . PHP_BIN . ' ' . MAIN_HOME . 'console.php plex_item "' . base64_encode(json_encode($rData, JSON_UNESCAPED_UNICODE)) . '"';
                 }
