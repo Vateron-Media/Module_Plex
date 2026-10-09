@@ -128,7 +128,7 @@ $rContainer = (($rFolder['target_container'] ?? null) ?: 'auto');
                         'remove_subtitles' => array('Remove Existing Subtitles', false, "Remove existing subtitles from file before encoding. You can't remove hardcoded subtitles using this method."),
                     )); ?>
                     <div class="mb-6">
-                        <label class="form-label" for="target_container"><?= $language::get('target_container'); ?> <i title="Which container to use when transcoding files." class="icon-base ti tabler-help-circle text-secondary"></i></label>
+                        <label class="form-label" for="target_container">Target Container <i title="Which container to use when transcoding files." class="icon-base ti tabler-help-circle text-secondary"></i></label>
                         <select name="target_container" id="target_container" class="form-select">
                             <?php foreach (array('auto', 'mp4', 'mkv', 'avi', 'mpg', 'flv', '3gp', 'm4v', 'wmv', 'mov', 'ts') as $rOption) : ?>
                                 <option value="<?= $rOption; ?>" <?= $rContainer == $rOption ? 'selected' : ''; ?>><?= $rOption; ?></option>

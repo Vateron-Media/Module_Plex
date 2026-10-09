@@ -70,7 +70,7 @@ class PlexController {
      * $_STATUS (the ?status= banner) is a global set by core's AdminScopeBootstrap.
      */
     private function render($_TITLE, $rView, array $rVars) {
-        global $rMobile, $rSettings, $rServers, $rPermissions, $language, $_STATUS;
+        global $rMobile, $rSettings, $rServers, $rPermissions, $_STATUS;
         extract($rVars);
 
         LayoutRenderer::renderHeader('admin', ['_TITLE' => $_TITLE]);
