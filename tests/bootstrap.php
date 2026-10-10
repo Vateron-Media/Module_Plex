@@ -36,9 +36,9 @@ if (!is_dir(WATCH_TMP_PATH)) {
 require_once __DIR__ . '/Support/FakePlex.php';
 
 // Deployed modules get ModuleLoader's per-module PSR-4 autoloader; mirror it for
-// this module and its `watch` dependency (sibling Module_Watchfolder checkout).
+// this module and its `watchfolder` dependency (sibling Module_Watchfolder checkout).
 spl_autoload_register(function (string $rClass): void {
-    $rRoots = array('XcVm\\Module\\Plex\\' => dirname(__DIR__), 'XcVm\\Module\\Watch\\' => dirname(__DIR__, 2) . '/Module_Watchfolder');
+    $rRoots = array('XcVm\\Module\\Plex\\' => dirname(__DIR__), 'XcVm\\Module\\Watchfolder\\' => dirname(__DIR__, 2) . '/Module_Watchfolder');
     foreach ($rRoots as $rPrefix => $rDir) {
         if (strncmp($rClass, $rPrefix, strlen($rPrefix)) === 0 && is_file($rFile = $rDir . '/' . str_replace('\\', '/', substr($rClass, strlen($rPrefix))) . '.php')) {
             require_once $rFile;

@@ -8,7 +8,7 @@ use XcVm\Core\Cluster\NodeRpc;
 use XcVm\Core\Http\ApiClient;
 use XcVm\Core\Util\AdminHelpers;
 use XcVm\Domain\Server\ServerRepository;
-use XcVm\Module\Watch\WatchService;
+use XcVm\Module\Watchfolder\WatchService;
 
 /**
  * PlexService — plex service
