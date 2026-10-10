@@ -75,7 +75,10 @@ class PlexAuth {
 			CURLOPT_HTTPAUTH       => CURLAUTH_BASIC,
 			CURLOPT_USERPWD        => $rUsername . ':' . $rPassword,
 			CURLOPT_TIMEOUT        => 30,
-			CURLOPT_SSL_VERIFYPEER => false,
+			// plex.tv's certificate is checked: this request carries the
+			// account's password, and unchecked anyone on the path could read it.
+			CURLOPT_SSL_VERIFYPEER => true,
+			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_POST           => true,
 			CURLOPT_RETURNTRANSFER => true,
 		]);
