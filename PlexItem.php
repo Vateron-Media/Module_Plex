@@ -7,7 +7,7 @@ use XcVm\Core\Events\Vod\VodImportResultEvent;
 use XcVm\Core\Util\ImageUtils;
 use XcVm\Domain\Stream\StreamProcess;
 use XcVm\Domain\Vod\VodItemImporter;
-use XcVm\Module\Watch\WatchService;
+use XcVm\Module\Watchfolder\WatchService;
 
 /**
  * PlexItem — imports one Plex item (a movie, or a show with its episodes):

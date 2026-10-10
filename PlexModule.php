@@ -157,7 +157,7 @@ class PlexModule extends BaseModule {
     public function registerNavbar(NavbarRegistry $registry): void {
         // Profile dropdown: core registers items under the 'profile' parent
         // (CoreNavbarProvider::_profile), reserving order 100–980 for modules.
-        // The 'watch' dependency owns the folder-settings divider at order 100.
+        // The 'watchfolder' dependency owns the folder-settings divider at order 100.
         $registry->add((new NavbarItem('profile.plex_settings'))
             ->parent('profile')->url('settings_plex')
             ->label('plex_settings')->permissions(['folder_watch_settings'])->order(120));

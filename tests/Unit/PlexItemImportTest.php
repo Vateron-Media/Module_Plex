@@ -3,7 +3,7 @@
 use PHPUnit\Framework\TestCase;
 use XcVm\Domain\Vod\VodItemImporter;
 use XcVm\Module\Plex\PlexItem;
-use XcVm\Module\Watch\WatchService;
+use XcVm\Module\Watchfolder\WatchService;
 use XcVm\Tests\Support\InstallSchema;
 
 /**

@@ -6,7 +6,7 @@ use XcVm\Core\Http\RequestManager;
 use XcVm\Core\Util\AdminHelpers;
 use XcVm\Core\Util\LayoutRenderer;
 use XcVm\Domain\Bouquet\BouquetService;
-use XcVm\Module\Watch\WatchService;
+use XcVm\Module\Watchfolder\WatchService;
 
 /**
  * Plex Module Controller
